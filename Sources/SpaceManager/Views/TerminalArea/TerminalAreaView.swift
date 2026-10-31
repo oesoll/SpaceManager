@@ -20,17 +20,9 @@ struct TerminalAreaView: View {
                 .padding(.vertical, 6)
                 .background(Color.orange.opacity(0.1))
             }
-            SingleTerminalView()
-                // 작업 창은 카드 라운딩이 없어 글자가 세로선에 붙는다. 셀 한 칸 남짓 들인다.
-                .padding(appState.windowKind == .workspace
-                         ? EdgeInsets(top: 6, leading: 12, bottom: 4, trailing: 4)
-                         : EdgeInsets())
+            // 카드 바탕·테두리는 TabSurfaceView가 그린다 — 탭을 나누면 카드가 여럿이 된다.
+            TabSurfaceView()
         }
-        // terminal.html의 WKWebView는 drawsBackground=false다. 카드 자체가 팔레트와
-        // 동일한 불투명색을 그려 behind-window 유리가 글자 뒤로 새지 않게 한다.
-        .background(
-            Color(nsColor: GlassSurfacePolicy.terminalCardColor(for: appState.windowKind))
-        )
     }
 }
 

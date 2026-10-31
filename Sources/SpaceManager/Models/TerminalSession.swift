@@ -29,6 +29,8 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     let remoteHost: String?
     let quickLaunch: QuickLaunch?
     let quickConfiguration: QuickSessionConfiguration
+    /// 셸 패널이 무엇에 붙는가(로그인 셸 또는 peer holder의 에이전트). 붙이는 방법은 TerminalAttachment에만 있다.
+    let attachment: TerminalAttachment
     private let initialName: String
 
     private(set) var terminalView: TerminalWebView?
@@ -53,7 +55,9 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
          workingDirectory: String, tmuxSessionName: String? = nil,
          remoteHost: String? = nil,
          quickLaunch: QuickLaunch? = nil,
-         quickConfiguration: QuickSessionConfiguration = .default) {
+         quickConfiguration: QuickSessionConfiguration = .default,
+         attachment: TerminalAttachment = .shell) {
+        self.attachment = attachment
         self.id = id
         self.kind = kind
         self.palette = kind == .quick ? .quickLight : .workspaceDark
@@ -110,6 +114,9 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         // 색을 그리는 터미널이다. 앱을 에이전트 셸에서 다시 띄우면 그 셸의 NO_COLOR=1이
         // 새 탭(과 새로 뜨는 tmux 서버)으로 새어 Codex가 색을 통째로 끈다.
         env.removeValue(forKey: "NO_COLOR")
+        // peer가 이 터미널의 에이전트를 sm 패널(`sm:<UUID>`)로 찾는 고리. tmux 탭에는 넣지 않는다 —
+        // 새로 뜨는 tmux 서버가 전역 환경으로 물려받아 모든 패널이 이 탭을 자기 것이라 주장한다.
+        if kind == .shell { env["SM_PANE_ID"] = id.uuidString }
         if kind == .quick {
             env = QuickSessionPolicy.applyingEnvironment(
                 env,
@@ -123,7 +130,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         }
         let startDir = FileManager.default.fileExists(atPath: workingDirectory)
             ? workingDirectory : NSHomeDirectory()
-        let arguments = Self.launchArguments(
+        var arguments = Self.launchArguments(
             kind: kind,
             tmuxSessionName: tmuxSessionName,
             workingDirectory: startDir,
@@ -134,6 +141,11 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
             quickConfiguration: quickConfiguration,
             sshErrorLog: sshErrorLogPath
         )
+        if kind == .shell, let command = attachment.command(
+            localHost: PeerDirectory.shared.localHostName,
+            sshAlias: PeerDirectory.shared.sshAlias(forPeerHost:)) {
+            arguments = ["-lc", command]
+        }
 
         let pty = PTYProcess()
         let view = terminalView

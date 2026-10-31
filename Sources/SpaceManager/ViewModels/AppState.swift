@@ -27,6 +27,8 @@ class AppState: ObservableObject {
     private var sessionsByWorkspace: [UUID: [TerminalSession]] = [:]
     private var selectedSessionIdByWorkspace: [UUID: UUID] = [:]
     private var selectedSessionObservation: AnyCancellable?
+    /// 탭별 패널 분할. 나누지 않은 탭은 여기 없다.
+    let panes = PaneStore()
 
     @Published var showNewWorkspaceSheet = false
     @Published var showAddProjectSheet = false
@@ -274,7 +276,7 @@ class AppState: ObservableObject {
         // 대상만 바꾼다. 배열을 비우면 추가 tmux 탭과 선택 ID까지 사라진다.
         let previous = sessions(for: ws)
         let updated = previous.map { $0.retargeted(to: host) }
-        for session in previous { session.cleanup() }
+        for session in previous { panes.discard(tabID: session.id); session.cleanup() }
         sessionsByWorkspace[ws.id] = updated
         if selectedWorkspace?.id == ws.id {
             ensureSessions(for: ws)
@@ -287,7 +289,7 @@ class AppState: ObservableObject {
     func deleteWorkspace(_ workspace: Workspace) {
         workspaces.removeAll { $0.id == workspace.id }
         if let sessions = sessionsByWorkspace[workspace.id] {
-            for session in sessions { session.cleanup() }
+            for session in sessions { panes.discard(tabID: session.id); session.cleanup() }
         }
         sessionsByWorkspace[workspace.id] = nil
         selectedSessionIdByWorkspace[workspace.id] = nil
@@ -463,6 +465,7 @@ class AppState: ObservableObject {
         // 여기서 지우면 "지워졌다가 되살아나는" 유령 삭제가 된다. UI(WorkspaceTabRow)도
         // 메인 탭엔 ×를 숨기지만, 진입점이 늘어도 안전하도록 모델에서도 막는다.
         guard session.kind != .tmuxMain else { return }
+        panes.discard(tabID: session.id)
         if sessions.contains(where: { $0.id == session.id }) {
             session.cleanup()
             sessions.removeAll { $0.id == session.id }

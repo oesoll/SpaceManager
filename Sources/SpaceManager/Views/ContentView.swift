@@ -137,16 +137,16 @@ extension ContentView {
                 .clipShape(RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous))
                 .overlay(cardRim)
 
+            // 터미널 카드의 라운딩·테두리는 TerminalAreaView 안에서 그린다. 탭을 나누면
+            // 패널마다 카드가 되어 사이드바 카드와 같은 간격으로 나란히 선다.
             TerminalAreaView()
-                .clipShape(RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous))
-                .overlay(cardRim)
         }
         .padding(Self.cardGap)
         .background(Color(Chrome.canvas))
     }
 
-    private static let cardGap: CGFloat = 8
-    private static let cardRadius: CGFloat = 12
+    static let cardGap: CGFloat = 8
+    static let cardRadius: CGFloat = 12
 
     private var cardRim: some View {
         RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)

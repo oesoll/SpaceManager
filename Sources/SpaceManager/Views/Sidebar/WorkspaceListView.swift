@@ -6,6 +6,7 @@ struct WorkspaceListView: View {
     @EnvironmentObject var appState: AppState
     var isCompact = false
     @ObservedObject private var activity = RecentActivityScanner.shared
+    @ObservedObject private var peers = PeerDirectory.shared
     @State private var draggingWorkspace: Workspace?
 
     /// 이 워크스페이스(루트 및 하위 경로)에서의 마지막 Claude 대화 시각
@@ -41,6 +42,7 @@ struct WorkspaceListView: View {
                         isSelected: appState.selectedWorkspace?.id == workspace.id,
                         lastConversation: lastConversation(for: workspace),
                         isGenerating: isGenerating(workspace),
+                        attention: appState.agentRollup(for: workspace, directory: peers),
                         tint: FolderTint.color(for: workspace.folderColor),
                         onChangeHost: { changeHost(workspace, to: $0) }
                     )
@@ -131,6 +133,7 @@ struct WorkspaceListView: View {
                                 WorkspaceTabRow(
                                     session: session,
                                     isSelected: appState.selectedSession?.id == session.id,
+                                    attention: appState.agentRollup(forTab: session, directory: peers),
                                     onSelect: {
                                         appState.selectSession(session)
                                     },
@@ -323,6 +326,7 @@ struct WorkspaceActivityDot: View {
 struct WorkspaceTabRow: View {
     @ObservedObject var session: TerminalSession
     let isSelected: Bool
+    var attention: AgentAttention?
     let onSelect: () -> Void
     let onClose: () -> Void
     @State private var isHovering = false
@@ -351,6 +355,9 @@ struct WorkspaceTabRow: View {
                     .fill(statusColor)
                     .frame(width: 5, height: 5)
                     .help(session.isReconnecting ? "재연결 중" : "종료됨")
+            } else if let attention, attention >= .working {
+                AgentStateMark(attention: attention)
+                    .help(AgentStateMark.spokenName(attention))
             }
 
             // 자리를 항상 확보하고 투명도로만 나타낸다 — 호버 때 요소가 끼어들면
@@ -424,6 +431,7 @@ struct WorkspaceRow: View {
     let isSelected: Bool
     var lastConversation: Date?
     var isGenerating: Bool = false
+    var attention: AgentAttention?
     /// `workspace.folderColor`를 따로 받는다 — Workspace의 ==는 id만 비교해서
     /// 값만 바뀐 행은 SwiftUI가 다시 그리지 않을 수 있다.
     var tint: NSColor?
@@ -444,7 +452,7 @@ struct WorkspaceRow: View {
             if isCompact {
                 folderIcon
                     .overlay(alignment: .topTrailing) {
-                        WorkspaceActivityDot(lastConversation: lastConversation, isGenerating: isGenerating)
+                        WorkspaceStatusMark(attention: attention, lastConversation: lastConversation, isGenerating: isGenerating)
                             .offset(x: 7, y: -6)
                     }
                     .frame(maxWidth: .infinity)
@@ -457,7 +465,7 @@ struct WorkspaceRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 2)
-                    WorkspaceActivityDot(lastConversation: lastConversation, isGenerating: isGenerating)
+                    WorkspaceStatusMark(attention: attention, lastConversation: lastConversation, isGenerating: isGenerating)
                     Menu {
                         WorkspaceHostChoices(workspace: workspace) { onChangeHost?($0) }
                     } label: {

@@ -56,6 +56,14 @@ The sidebar uses a behind-window `NSVisualEffectView`. The main canvas is opaque
 
 The 16 ANSI slots are painted by role rather than by name, the same palette as Fine. Claude's `*-ansi` themes emit 97 for emphasis, 37 for secondary text, 94 for inline code and links and 91 for its accent, so 37 is a grey and the light palette keeps 97 near-black. A 4.5:1 minimum contrast keeps truecolor output (Codex syntax highlighting) legible on either background. New tabs drop an inherited `NO_COLOR`. `TerminalColorCaptureTests` and `WindowCaptureTests` (`SM_CAPTURE=1`, isolated home and `TMUX_TMPDIR`) render real captures for review.
 
+### Panes and agent states are drawn by the app
+
+A tab can be split into panes (⌘D right, ⇧⌘D down, ⌘[ / ⌘] to move, ⇧⌘↩ to zoom one). Following herdr's `pane_gaps`, panes do not share divider lines: each becomes its own card on the canvas, with the same gap and corner radius as the sidebar card, and the gap between two cards is the resize handle. The focused card's rim is the accent colour, as the active pane border was in tmux. A pane's name sits at the top of its card; an unsplit tab is drawn exactly as before.
+
+Agent state comes from `peer --all --json`, read every two seconds while a window is visible. A pane is matched to its agent through the `SM_PANE_ID` its shell receives (peer reports it as `sm:<UUID>`); tmux sessions still running agents are matched by host and session name until they move off tmux. States are told apart by shape as well as colour: a pink exclamation circle waits on you (permission or question), an amber triangle failed, the existing spinner is working, and a plain dot means it finished after you last looked at that pane. Idle panes show nothing. Workspace and tab rows show the most urgent state inside them, and ⌘J jumps to the next pane waiting on you. "Finished but unseen" is remembered by the app, not by peer, and starts empty on launch.
+
+How a pane attaches to its terminal lives in one file, `TerminalAttachment`: a login shell, or `peer-hold attach --sock …` for an agent whose PTY is held by its machine (behind `ssh -t` when remote).
+
 ## How to use
 
 ### Requirements and current assumptions

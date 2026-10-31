@@ -76,6 +76,8 @@ struct AppCommands: Commands {
     @FocusedObject private var appState: AppState?
     @Environment(\.openWindow) private var openWindow
 
+    private var isWorkspaceWindow: Bool { appState?.windowKind == .workspace }
+
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Window") {
@@ -121,6 +123,45 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
             .disabled(appState == nil)
+
+            Divider()
+
+            // tmux의 prefix 키가 하던 일. 터미널이 키를 먼저 먹지 않도록 메뉴 단축키로 둔다.
+            Button("패널 오른쪽으로 나누기") {
+                appState?.splitPane(.horizontal)
+            }
+            .keyboardShortcut("d", modifiers: .command)
+            .disabled(!isWorkspaceWindow)
+
+            Button("패널 아래로 나누기") {
+                appState?.splitPane(.vertical)
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(!isWorkspaceWindow)
+
+            Button("다음 패널") {
+                appState?.cyclePane(forward: true)
+            }
+            .keyboardShortcut("]", modifiers: .command)
+            .disabled(appState?.selectedPaneGroup?.isSplit != true)
+
+            Button("이전 패널") {
+                appState?.cyclePane(forward: false)
+            }
+            .keyboardShortcut("[", modifiers: .command)
+            .disabled(appState?.selectedPaneGroup?.isSplit != true)
+
+            Button("패널 확대") {
+                appState?.toggleZoomPane()
+            }
+            .keyboardShortcut(.return, modifiers: [.command, .shift])
+            .disabled(appState?.selectedPaneGroup?.isSplit != true)
+
+            Button("기다리는 패널로") {
+                appState?.focusNextWaitingPane()
+            }
+            .keyboardShortcut("j", modifiers: .command)
+            .disabled(!isWorkspaceWindow)
         }
     }
 }
