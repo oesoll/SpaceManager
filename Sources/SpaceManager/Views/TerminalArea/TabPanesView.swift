@@ -14,6 +14,8 @@ struct TabPanesView: View {
     @ObservedObject var group: PaneGroup
     /// 패널 이름표에 쓸 글. 에이전트 매칭은 부르는 쪽이 한다.
     let badge: (TerminalSession) -> PaneBadge
+    /// 고르는 중인 자리에 띄울 상자.
+    var picker: ((UUID) -> AnyView)?
 
     static let gap = ContentView.cardGap
     static let radius = ContentView.cardRadius
@@ -26,7 +28,11 @@ struct TabPanesView: View {
             let dividers = layout.dividers(in: bounds, divider: Self.gap)
             ZStack(alignment: .topLeading) {
                 ForEach(group.paneIDs, id: \.self) { id in
-                    if let frame = frames[id], let session = group.session(for: id) {
+                    if let frame = frames[id], group.picking.contains(id), let picker {
+                        PickerCard(isFocused: group.focused == id) { picker(id) }
+                            .frame(width: frame.width, height: frame.height)
+                            .offset(x: frame.minX, y: frame.minY)
+                    } else if let frame = frames[id], let session = group.session(for: id) {
                         PaneCard(session: session,
                                  badge: badge(session),
                                  isFocused: group.focused == id && group.isSplit,
@@ -87,6 +93,28 @@ private struct PaneCard: View {
                 .allowsHitTesting(false)
         )
         .background(PaneFocusMonitor(onPress: onFocus))
+    }
+}
+
+/// 고르는 중인 자리. 터미널 대신 상자가 카드 안에 뜬다 — 고른 것이 바로 이 자리에서 열린다.
+private struct PickerCard<Content: View>: View {
+    let isFocused: Bool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ScrollView {
+            content
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 28)
+        }
+        .scrollIndicators(.never)
+        .background(Color(Chrome.pane))
+        .clipShape(RoundedRectangle(cornerRadius: TabPanesView.radius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: TabPanesView.radius, style: .continuous)
+                .strokeBorder(Color(isFocused ? Chrome.accent : Chrome.hairline), lineWidth: 1)
+                .allowsHitTesting(false)
+        )
     }
 }
 

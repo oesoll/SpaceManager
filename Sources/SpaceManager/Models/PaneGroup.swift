@@ -13,6 +13,12 @@ final class PaneGroup: ObservableObject, Identifiable {
     @Published private(set) var extras: [UUID: TerminalSession] = [:]
     /// 포커스된 패널 하나만 탭 전체로 키워 본다(tmux·herdr의 zoom). 다른 패널은 그대로 돈다.
     @Published private(set) var isZoomed = false
+    /// 무엇을 열지 고르는 중인 패널. 터미널이 아직 없고, 패널 안에 고르는 상자가 뜬다.
+    @Published private(set) var picking: Set<UUID> = []
+    /// 고르기를 취소하면 돌아갈 포커스.
+    private var focusBeforePicking: [UUID: UUID] = [:]
+    /// 고르는 중인 자리마다 상자의 데이터.
+    var pickerContexts: [UUID: AgentPickerContext] = [:]
     private var exitWatchers: [UUID: AnyCancellable] = [:]
 
     var id: UUID { anchor.id }
@@ -24,6 +30,7 @@ final class PaneGroup: ObservableObject, Identifiable {
     }
 
     var paneIDs: [UUID] { layout.paneIDs }
+    /// 고르는 중인 자리도 화면에서는 패널이다.
     var isSplit: Bool { layout.paneCount > 1 }
 
     func session(for id: UUID) -> TerminalSession? {
@@ -43,6 +50,38 @@ final class PaneGroup: ObservableObject, Identifiable {
         watchExit(of: session)
         focus(id)
         return session
+    }
+
+    /// 포커스된 패널을 나누고, 새 자리에는 고르는 상자를 띄운다. 터미널은 고른 뒤에 붙는다.
+    @discardableResult
+    func splitForPicker(_ axis: PaneAxis) -> UUID {
+        let id = UUID()
+        focusBeforePicking[id] = focused
+        layout = layout.splitting(focused, axis: axis, newPane: id)
+        picking.insert(id)
+        isZoomed = false
+        focused = id
+        return id
+    }
+
+    /// 고른 에이전트의 터미널을 그 자리에 붙인다.
+    func resolvePicker(_ id: UUID, with session: TerminalSession) {
+        guard picking.remove(id) != nil else { return }
+        focusBeforePicking[id] = nil
+        pickerContexts[id] = nil
+        extras[id] = session
+        watchExit(of: session)
+        focus(id)
+    }
+
+    /// 취소: 새 자리가 흔적 없이 사라지고 포커스는 원래 패널로.
+    func cancelPicker(_ id: UUID) {
+        guard picking.remove(id) != nil, let next = layout.removing(id) else { return }
+        pickerContexts[id] = nil
+        layout = next
+        let back = focusBeforePicking.removeValue(forKey: id) ?? next.paneIDs.first ?? anchor.id
+        focus(layout.contains(back) ? back : (next.paneIDs.first ?? anchor.id))
+        if !isSplit { isZoomed = false }
     }
 
     func focus(_ id: UUID) {

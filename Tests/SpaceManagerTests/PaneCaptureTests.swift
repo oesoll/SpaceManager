@@ -42,8 +42,17 @@ final class PaneCaptureTests: XCTestCase {
         appState.addShellTab()
         let tab = try XCTUnwrap(appState.selectedSession)
         tab.name = "main"
-        appState.splitPane(.horizontal)
-        appState.splitPane(.vertical)
+        let flatWorkspace = try XCTUnwrap(appState.selectedWorkspace)
+        func shell(_ id: UUID) -> TerminalSession {
+            TerminalSession(id: id, kind: .shell, name: "zsh", workingDirectory: flatWorkspace.rootPath)
+        }
+        if env["SM_CAPTURE_SCENE"] == "picker" {
+            try capturePicker(appState: appState, tab: tab, shell: shell, appearance: appearance, home: home)
+            return
+        }
+        let built = appState.panes.ensureGroup(for: tab)
+        built.split(.horizontal, make: shell)
+        built.split(.vertical, make: shell)
         let group = try XCTUnwrap(appState.selectedPaneGroup)
         let ids = group.paneIDs
         XCTAssertEqual(ids.count, 3)
@@ -137,6 +146,61 @@ final class PaneCaptureTests: XCTestCase {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try png.write(to: folder.appendingPathComponent("panes-\(appearance).png"))
         for id in ids { group.session(for: id)?.cleanup(force: true) }
+    }
+
+    /// 고르는 상자 시안: 왼쪽은 일하는 에이전트, 오른쪽은 ⌘D로 막 생긴 자리와 그 안의 상자.
+    @MainActor
+    private func capturePicker(appState: AppState, tab: TerminalSession, shell: (UUID) -> TerminalSession,
+                               appearance: String, home: URL) throws {
+        let group = appState.panes.ensureGroup(for: tab)
+        appState.splitPane(.horizontal)
+        let pickerID = try XCTUnwrap(group.picking.first)
+        let context = try XCTUnwrap(group.pickerContexts[pickerID])
+        // 상자는 모델·세션 목록을 뒤에서 읽는다. 그 결과가 아래 예시를 덮지 않게 먼저 끝나기를 기다린다.
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        let now = Date()
+        context.claudeModels = [
+            AgentModelChoice(id: "claude-opus-5-5", name: "Opus 5.5", efforts: [.low, .medium, .high, .xhigh, .max], defaultEffort: .high),
+            AgentModelChoice(id: "claude-sonnet-5-5", name: "Sonnet 5.5", efforts: [.low, .medium, .high], defaultEffort: .high),
+        ]
+        context.backgroundSessions = [
+            AgentPickerSession(name: "flat-qa", engine: .claude, status: .running, lastActive: now, attention: .blocked),
+            AgentPickerSession(name: "flat-engine", engine: .codex, status: .running, lastActive: now, attention: .working),
+            AgentPickerSession(name: "flat-rev", engine: .claude, status: .ended, lastActive: now.addingTimeInterval(-2400)),
+        ]
+        UserDefaults.standard.removeObject(forKey: "agentPicker.last")
+        let directory = PeerDirectory.shared
+        directory.apply(PeerListing(peers: [
+            PeerAgent(id: "claude:frontend", name: "frontend", host: directory.localHostName,
+                      target: "sm:" + tab.id.uuidString, state: .working, since: now),
+        ]), now: now)
+
+        let screens = home.appendingPathComponent("screens")
+        try FileManager.default.createDirectory(at: screens, withIntermediateDirectories: true)
+        try """
+        \u{1b}[1m⏺\u{1b}[0m Update(src/components/PriceRow.tsx)
+          ⎿  Updated src/components/PriceRow.tsx with 3 additions and 1 removal
+
+        \u{1b}[1m⏺\u{1b}[0m 반올림을 한 함수로 모았습니다. 장바구니 합계와 결제 요약이
+          같은 값을 쓰는지 테스트로 확인하겠습니다.
+
+        \u{1b}[38;5;210m✻\u{1b}[0m Running tests… \u{1b}[2m(38s · esc to interrupt)\u{1b}[0m
+        """.write(to: screens.appendingPathComponent("left.txt"), atomically: true, encoding: .utf8)
+
+        let window = try openWindow(CaptureLayout(appState: appState), dark: appearance == "dark")
+        defer { window.orderOut(nil) }
+        let left = tab.terminalView
+        left?.sendText("clear; cat '\(screens.appendingPathComponent("left.txt").path)'; sleep 600")
+        left?.pressReturn()
+        RunLoop.main.run(until: Date().addingTimeInterval(2.5))
+        let image = try capture(window)
+        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/window-capture")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try png.write(to: folder.appendingPathComponent("picker-\(appearance).png"))
+        tab.cleanup(force: true)
     }
 
     @MainActor

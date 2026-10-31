@@ -61,15 +61,35 @@ private struct TabSurfaceContent: View {
 }
 
 private struct SplitTab: View {
+    @EnvironmentObject private var appState: AppState
     @ObservedObject var group: PaneGroup
     @ObservedObject var directory: PeerDirectory
 
     var body: some View {
-        TabPanesView(group: group) { session in
+        TabPanesView(group: group, badge: { session in
             guard let agent = directory.agent(for: session, includeStale: true) else {
                 return PaneBadge(title: session.name)
             }
             return PaneBadge(agent: agent, attention: directory.attention(of: agent))
+        }, picker: { id in
+            AnyView(picker(for: id))
+        })
+    }
+
+    @ViewBuilder
+    private func picker(for id: UUID) -> some View {
+        if let context = group.pickerContexts[id] {
+            let taken = Set(directory.agents.map(\.name)).union(context.backgroundSessions.map(\.name))
+            AgentPickerView(
+                workspace: appState.selectedWorkspace?.name ?? "",
+                context: context,
+                initial: AgentPickerDefaults.load(fallback: .init(engine: .claude,
+                                                                  modelID: context.claudeModels.first?.id ?? "",
+                                                                  effort: .high)),
+                suggestName: { appState.suggestedAgentName(for: $0, taken: taken) },
+                onOpen: { appState.launchAgent($0, inPane: id, group: group) },
+                onBring: { appState.attachAgent(named: $0.name, host: appState.selectedWorkspace.flatMap(appState.sessionHost(for:)), inPane: id, group: group) },
+                onCancel: { group.cancelPicker(id) })
         }
     }
 }

@@ -2,18 +2,70 @@ import Foundation
 
 /// 패널 분할과 이동. tmux의 prefix 키 대신 메뉴 단축키로 부른다.
 extension AppState {
-    /// 지금 탭의 포커스된 패널을 나눈다. 새 패널은 워크스페이스와 같은 폴더·실행 위치의 셸이다.
-    ///
-    /// 한계: 아직 셸만 연다. peer의 에이전트 holder가 나오면 새 패널이 `peer attach <id>`를
-    /// 실행하도록 `make`만 바꾼다(cld-claude-7과 정한 "패널 = attach 명령 하나").
+    /// 지금 탭의 포커스된 패널을 나누고, 새 자리에 무엇을 열지 고르는 상자를 띄운다.
+    /// tmux는 새 패널에 빈 명령줄을 띄웠지만, sm에서는 패널이 곧 에이전트다(SEOL 10/31).
     func splitPane(_ axis: PaneAxis) {
         guard windowKind == .workspace, let tab = selectedSession, let workspace = selectedWorkspace else { return }
-        panes.ensureGroup(for: tab).split(axis) { id in
-            TerminalSession(id: id, kind: .shell,
-                            name: TerminalSession.defaultShellName(remoteHost: workspace.remoteHost),
-                            workingDirectory: workspace.rootPath,
-                            remoteHost: workspace.remoteHost)
+        let group = panes.ensureGroup(for: tab)
+        let id = group.splitForPicker(axis)
+        let context = AgentPickerContext(claudeModels: AgentModelCatalog.claudeFallback(),
+                                         codexModels: AgentModelCatalog.codex())
+        group.pickerContexts[id] = context
+        let folder = workspace.rootPath
+        let host = sessionHost(for: workspace)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let claude = AgentModelCatalog.claude()
+            let sessions = SessionLayer.backgroundSessions(underFolder: folder, host: host)
+            DispatchQueue.main.async {
+                if !claude.isEmpty { context.claudeModels = claude }
+                context.backgroundSessions = sessions
+            }
         }
+    }
+
+    /// 세션 층이 쓰는 기기 이름(로컬이면 nil). 워크스페이스의 실행 위치는 ssh 별칭이라 peer 이름으로 되짚는다.
+    func sessionHost(for workspace: Workspace) -> String? {
+        guard workspace.isRemote, let alias = workspace.remoteHost else { return nil }
+        return PeerDirectory.shared.peerHost(forAlias: alias)
+    }
+
+    /// 상자에서 "열기": 세션 층이 에이전트를 띄우고(이 패널에 묶어), 그 자리에 붙는다.
+    func launchAgent(_ spec: AgentLaunchSpec, inPane id: UUID, group: PaneGroup) {
+        guard let workspace = selectedWorkspace, let context = group.pickerContexts[id] else { return }
+        context.isLaunching = true
+        context.error = nil
+        AgentPickerDefaults(engine: spec.engine, modelID: spec.modelID, effort: spec.effort).save()
+        let host = sessionHost(for: workspace)
+        let directory = workspace.isRemote ? workspace.remoteDirectoryPath : workspace.rootPath
+        SessionLayer.run(SessionLayer.spawnArguments(spec, pane: id.uuidString, workingDirectory: directory, host: host)) { [weak group] result in
+            guard let group else { return }
+            switch result {
+            case .success:
+                self.attachAgent(named: spec.name, host: host, inPane: id, group: group)
+            case .failure(let failure):
+                context.isLaunching = false
+                context.error = failure.message
+            }
+        }
+    }
+
+    /// 상자에서 "가져오기", 또는 띄운 직후: 그 세션을 이 자리의 터미널로 붙인다.
+    /// 끝난 세션이면 세션 층이 attach 전에 되살린다(이름이 곧 세션).
+    func attachAgent(named name: String, host: String?, inPane id: UUID, group: PaneGroup) {
+        guard let workspace = selectedWorkspace else { return }
+        let peerHost = host ?? PeerDirectory.shared.localHostName
+        let session = TerminalSession(id: id, kind: .shell, name: name, workingDirectory: workspace.rootPath,
+                                      attachment: .agent(name: name, host: peerHost, agent: nil))
+        group.resolvePicker(id, with: session)
+    }
+
+    /// 상자의 이름 기본값: 워크스페이스-엔진-번호. 지금 아는 세션·에이전트 이름과 겹치지 않는 가장 작은 번호.
+    func suggestedAgentName(for engine: AgentEngine, taken: Set<String>) -> String {
+        guard let workspace = selectedWorkspace else { return engine.rawValue }
+        let base = workspace.effectiveTmuxSessionName + "-" + engine.rawValue
+        var n = 1
+        while taken.contains("\(base)-\(n)") { n += 1 }
+        return "\(base)-\(n)"
     }
 
     /// peer가 아는 에이전트를 지금 탭의 새 패널로 연다. 이미 이 창의 패널에 붙어 있으면 그 패널로 간다.
@@ -79,8 +131,14 @@ extension PeerDirectory {
     /// 패널의 에이전트. holder에 붙은 패널은 peer 행 id로, sm이 직접 띄운 셸 속 에이전트는
     /// target(`sm:<패널 UUID>`)으로 찾는다.
     func agent(for session: TerminalSession, includeStale: Bool = false) -> PeerAgent? {
-        if case .agent(_, let host, let id?) = session.attachment {
-            return agents.first { (includeStale || !$0.isStale) && $0.id == id && $0.host == host }
+        if case .agent(let name, let host, let id) = session.attachment {
+            if let id {
+                return agents.first { (includeStale || !$0.isStale) && $0.id == id && $0.host == host }
+            }
+            // 세션 층의 이름이 곧 peer 이름이다. 이 패널에 묶여 떴으면 target(sm:<패널>)으로도 찾는다.
+            if let byName = agents.first(where: { (includeStale || !$0.isStale) && $0.name == name && $0.host == host }) {
+                return byName
+            }
         }
         return agent(forPane: session.id, includeStale: includeStale)
     }
@@ -122,5 +180,15 @@ extension AppState {
             .filter { $0.host == host && $0.group == session && $0.target.hasPrefix("%") }
             .map(directory.attention(of:))
         return (fromPanes + fromTmux).max()
+    }
+}
+
+extension Workspace {
+    /// 원격 기기에서의 작업 폴더를 그쪽 세션 층이 펼칠 수 있는 모양으로(`~/…` 또는 절대 경로).
+    var remoteDirectoryPath: String {
+        switch remoteDirectory {
+        case .relativeToHome(let relative): return relative.isEmpty ? "~" : "~/" + relative
+        case .absolute(let path): return path
+        }
     }
 }
