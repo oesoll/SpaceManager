@@ -26,7 +26,7 @@ Windows, sidebars, state, and navigation use SwiftUI and AppKit. Each terminal i
 
 Terminals used to be a `WKWebView` running xterm.js. Every web view started its own WebKit content process, so four panes meant four more processes of tens of MB each (measured 10/31). With libghostty the first terminal adds about 18 MB to the app for Metal and font setup and each further terminal about 3 MB, with no helper processes. The palette and minimum contrast are the same values xterm used, and so is the font: Menlo, with Korean from the system fallback (Apple SD Gothic Neo). terminal.html listed D2Coding first, but WebKit does not expose user-installed fonts to web content, so xterm always drew Menlo and the system Korean font; carrying the list over literally brought D2Coding back, which had already been rejected as tiring to read. The Korean font is deliberately not named in the config: Ghostty treats a configured family as primary and skips its fallback size adjustment, so Hangul drew small inside its two cells and syllables spread apart like words. Left to the fallback, Ghostty scales it to Menlo's height, as native Ghostty does. sm writes its own Ghostty config and does not read the user's Ghostty settings.
 
-sm's build applies three small patches to libghostty (`scripts/ghostty-patches/`): `login(1)` runs quietly so no pane prints "Last login"; a pane without focus draws no cursor, not even Ghostty's hollow box, so only the pane that takes keys shows one; and two-cell glyphs (Korean from the system fallback font, which is narrower than two cells) are centred in their cells, in text and in the composing preedit, so the spacing is even and the preedit underline sits under the glyph.
+The terminal layer lives in a sibling package, `../GhosttyTerminal`, which Fine uses too, so a fix to input, rendering or the engine lands in both apps at once. It applies three small patches to libghostty (`../GhosttyTerminal/scripts/ghostty-patches/`): `login(1)` runs quietly so no pane prints "Last login"; a pane without focus draws no cursor, not even Ghostty's hollow box, so only the pane that takes keys shows one; and two-cell glyphs (Korean from the system fallback font, which is narrower than two cells) are centred in their cells, in text and in the composing preedit, so the spacing is even and the preedit underline sits under the glyph.
 
 Workspace windows place a sidebar card and a terminal card on a flat canvas, separated by hairlines rather than shadows. Each sidebar row shows a folder icon (its color can be set per workspace from the context menu), the name, the activity dot, and where it runs (`mac`, `arch`, …). The sidebar button switches between the full sidebar and a compact rail of colored folder icons at the same vertical positions. Light and dark apply to the whole window, terminal palette included.
 
@@ -87,13 +87,13 @@ Quick conversations run Claude Code, found on your PATH. Their working directory
 git clone https://github.com/NEWBIE0413/SpaceManager.git
 cd SpaceManager
 brew install zig            # 0.17, needed once to build libghostty
-./scripts/build-ghostty.sh  # pinned Ghostty commit → Frameworks/GhosttyKit.xcframework
+sh ../GhosttyTerminal/scripts/build-ghostty.sh  # pinned Ghostty commit → ../GhosttyTerminal/Frameworks/GhosttyKit.xcframework
 ./scripts/test-isolated.sh
 swift build -c release
 .build/release/SpaceManager
 ```
 
-`build-ghostty.sh` clones Ghostty into `~/.cache/sm-ghostty`, applies `scripts/ghostty-patches/`, and builds the static library (about 140 MB, not committed). SwiftPM then produces the executable. This repository does not currently include a general-purpose `.app` packaging script.
+`build-ghostty.sh` (in `../GhosttyTerminal`, a sibling checkout) clones Ghostty into `~/.cache/sm-ghostty`, applies its `scripts/ghostty-patches/`, and builds the static library (about 140 MB, not committed). SwiftPM then produces the executable. This repository does not currently include a general-purpose `.app` packaging script.
 
 The test wrapper gives Foundation a temporary home directory because some window-state tests instantiate the application's storage singleton. Scanner benchmarks use synthetic transcripts: `python3 scripts/benchmark-scanners.py`. See [the resource optimization measurements](docs/performance/2026-09-09-scanners.md) for the comparison and its limits.
 

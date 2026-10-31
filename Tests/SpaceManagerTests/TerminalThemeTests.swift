@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import GhosttyTerminal
 @testable import SpaceManager
 
 final class TerminalThemeTests: XCTestCase {
@@ -26,7 +27,7 @@ final class TerminalThemeTests: XCTestCase {
         for palette in [TerminalPalette.quickLight, .workspaceDark] {
             XCTAssertEqual(Set(Self.ansi16).subtracting(palette.colors.keys), [])
             // 16칸이 모두 Ghostty 설정의 palette 줄이 된다.
-            let config = GhosttyConfigText.make(palette: palette)
+            let config = GhosttyConfigText.make(theme: palette.ghosttyTheme)
             XCTAssertEqual(config.components(separatedBy: "\npalette = ").count - 1, 16)
         }
         XCTAssertEqual(TerminalPalette.quickLight.colors["background"], "#ffffff")

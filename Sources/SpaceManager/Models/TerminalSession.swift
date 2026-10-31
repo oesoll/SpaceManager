@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import GhosttyTerminal
 
 enum TabKind: String, Codable {
     case tmuxMain    // 워크스페이스 고정 탭 — 워크스페이스 tmux 세션에 attach
@@ -41,7 +42,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     /// 작업 창의 라이트/다크를 따른다. 터미널이 아직 없으면 만들 때 이 값을 쓴다.
     /// 화면이 다시 그려질 때마다 같은 값이 다시 들어온다 — 바뀐 때만 표면 설정을 다시 건다.
     var palette: TerminalPalette {
-        didSet { if palette != oldValue { terminalView?.setPalette(palette) } }
+        didSet { if palette != oldValue { terminalView?.setTheme(palette.ghosttyTheme) } }
     }
     private var started = false
     private var quickSessionId: String?
@@ -108,7 +109,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
             environment: launchEnvironment(),
             workingDirectory: startDir)
         let hint = sizeHint.flatMap { $0.width > 0 && $0.height > 0 ? $0 : nil }
-        let view = GhosttyTerminalView(launch: launch, palette: palette, startWhenSized: kind != .quick, initialSize: hint)
+        let view = GhosttyTerminalView(launch: launch, theme: palette.ghosttyTheme, startWhenSized: kind != .quick, initialSize: hint)
         view.translatesAutoresizingMaskIntoConstraints = false
         let launchedAt = Date()
         view.onExit = { [weak self, weak view] code in
@@ -205,8 +206,12 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
                 timer.invalidate()
                 return
             }
-            if let pid = view.foregroundProcessIdentifier {
-                self.resolveQuickSessionId(processIdentifier: pid)
+            // 맥에서 표면의 직속 자식은 login(1)이고 claude는 그 아래 같은 그룹에 있다 — 앞 그룹을 훑어
+            // 등록부(~/.claude/sessions/<pid>.json)를 쓴 pid를 찾는다(10/31 실측: 앞 그룹 리더는 login).
+            if let leader = view.foregroundProcessIdentifier {
+                for pid in ProcessGroup.members(of: leader) where self.quickSessionId == nil {
+                    self.resolveQuickSessionId(processIdentifier: pid)
+                }
             }
             if self.quickSessionId != nil {
                 timer.invalidate()
@@ -374,7 +379,13 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         pendingTimer?.invalidate()
         pendingView?.terminate()
         pendingView = nil
-        terminalView?.terminate()
+        // Quick 탭은 claude를 표면에서 직접 띄운다. claude는 SIGHUP·SIGTERM을 무시해서, 표면만 닫으면 PTY 없이
+        // 살아남는다(GhosttyTerminal 시험) — 유예 뒤 SIGKILL로 정리한다. 다른 탭(attach·셸)은 보통 터미널처럼 HUP만.
+        if kind == .quick {
+            terminalView?.terminate(reapingAfter: 3)
+        } else {
+            terminalView?.terminate()
+        }
         terminalView?.removeFromSuperview()
         terminalView = nil
     }

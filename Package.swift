@@ -6,27 +6,18 @@ let package = Package(
     platforms: [
         .macOS(.v14)
     ],
+    dependencies: [
+        // libghostty 터미널 층. Fine과 같은 엔진·패치·입력 처리를 함께 쓴다(10/31 sm에서 떼어 냄).
+        // 그 패키지의 scripts/build-ghostty.sh가 GhosttyKit.xcframework를 만든다.
+        .package(path: "../GhosttyTerminal")
+    ],
     targets: [
-        // libghostty. scripts/build-ghostty.sh가 Frameworks/에 만든다.
-        .binaryTarget(
-            name: "GhosttyKit",
-            path: "Frameworks/GhosttyKit.xcframework"
-        ),
         .executableTarget(
             name: "SpaceManager",
             dependencies: [
-                "GhosttyKit"
+                .product(name: "GhosttyTerminal", package: "GhosttyTerminal")
             ],
-            path: "Sources/SpaceManager",
-            exclude: ["Terminal/Ghostty/LICENSE-ghostty"],
-            linkerSettings: [
-                .linkedLibrary("c++"),
-                .linkedFramework("Metal"),
-                .linkedFramework("QuartzCore"),
-                .linkedFramework("CoreText"),
-                .linkedFramework("IOSurface"),
-                .linkedFramework("Carbon")
-            ]
+            path: "Sources/SpaceManager"
         ),
         .executableTarget(
             name: "sm",

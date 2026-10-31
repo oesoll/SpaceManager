@@ -2,6 +2,7 @@ import AppKit
 import GhosttyKit
 import WebKit
 import XCTest
+@testable import GhosttyTerminal
 @testable import SpaceManager
 
 /// 같은 글자·같은 색을 웹뷰(xterm.js 시절, 지금 Fine)와 libghostty로 나란히 그려 획의 굵기를 잰다.
@@ -35,7 +36,7 @@ final class GhosttyWeightTests: XCTestCase {
         try "printf '%s\\n' '\(Self.text)'; sleep 60\n".write(to: script, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: script) }
         let term = GhosttyTerminalView(launch: .init(command: "/bin/sh " + script.path, workingDirectory: NSHomeDirectory()),
-                                       palette: .workspaceDark)
+                                       theme: TerminalPalette.workspaceDark.ghosttyTheme)
         term.frame = NSRect(origin: NSPoint(x: half.width, y: 0), size: half)
         root.addSubview(term)
         defer { term.terminate(); window.close() }
@@ -78,7 +79,7 @@ final class GhosttyWeightTests: XCTestCase {
     private static func config(extra: [String]) -> ghostty_config_t? {
         guard let config = ghostty_config_new() else { return nil }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("weight-\(UUID().uuidString).conf")
-        let text = GhosttyConfigText.make(palette: .workspaceDark) + "\n" + extra.joined(separator: "\n") + "\n"
+        let text = GhosttyConfigText.make(theme: TerminalPalette.workspaceDark.ghosttyTheme) + "\n" + extra.joined(separator: "\n") + "\n"
         try? text.write(to: file, atomically: true, encoding: .utf8)
         ghostty_config_load_file(config, file.path)
         ghostty_config_finalize(config)

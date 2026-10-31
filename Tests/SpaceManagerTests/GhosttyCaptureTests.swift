@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+@testable import GhosttyTerminal
 @testable import SpaceManager
 
 /// libghostty 표면이 실제로 그리는지와 무게를 본다. `SM_CAPTURE=1`일 때만 돈다.
@@ -32,7 +33,7 @@ final class GhosttyCaptureTests: XCTestCase {
         let rssBefore = Self.residentMB()
         let view = GhosttyTerminalView(
             launch: .init(command: "/bin/sh " + script.path, workingDirectory: NSHomeDirectory()),
-            palette: dark ? .workspaceDark : .workspaceLight)
+            theme: (dark ? TerminalPalette.workspaceDark : .workspaceLight).ghosttyTheme)
         XCTAssertNotNil(view.surface, "ghostty_surface_new failed")
         window.contentView = view
         window.orderFrontRegardless()
@@ -64,7 +65,7 @@ final class GhosttyCaptureTests: XCTestCase {
         var more: [GhosttyTerminalView] = []
         for index in 0..<3 {
             let extra = GhosttyTerminalView(launch: .init(command: "/bin/sh -c 'sleep 30'", workingDirectory: "/"),
-                                            palette: .workspaceDark)
+                                            theme: TerminalPalette.workspaceDark.ghosttyTheme)
             extra.frame = NSRect(x: 0, y: 0, width: 300, height: 200)
             window.contentView?.addSubview(extra)
             more.append(extra)

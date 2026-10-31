@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+@testable import GhosttyTerminal
 @testable import SpaceManager
 
 final class TerminalHostTests: XCTestCase {

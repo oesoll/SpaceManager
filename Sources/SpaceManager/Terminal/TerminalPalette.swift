@@ -1,4 +1,5 @@
 import Foundation
+import GhosttyTerminal
 
 /// 터미널(libghostty)에 전달하는 창 종류별 팔레트.
 struct TerminalPalette: Equatable {
@@ -73,4 +74,9 @@ struct TerminalPalette: Equatable {
 
     /// 라이트 작업 창은 Quick과 같은 라이트 역할 팔레트를 쓴다.
     static let workspaceLight = quickLight
+
+    /// 공용 터미널 패키지(GhosttyTerminal)에 넘기는 모양. 색 이름과 대비는 그대로다.
+    var ghosttyTheme: GhosttyTheme {
+        GhosttyTheme(colors: colors, minimumContrast: minimumContrastRatio)
+    }
 }

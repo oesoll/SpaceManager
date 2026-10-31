@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+@testable import GhosttyTerminal
 @testable import SpaceManager
 
 /// 자식 프로세스가 태어나는 순간 보는 터미널 크기. libghostty는 표면을 800×600픽셀로 시작하므로, 크기를
@@ -24,7 +25,7 @@ final class GhosttyStartSizeTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: file) }
         let view = GhosttyTerminalView(
             launch: .init(command: "/bin/sh -c 'stty size > \(file.path); sleep 5'", workingDirectory: NSHomeDirectory()),
-            palette: .workspaceDark, startWhenSized: startWhenSized)
+            theme: TerminalPalette.workspaceDark.ghosttyTheme, startWhenSized: startWhenSized)
         let window = host(view)
         defer { view.terminate(); window.close() }
         let deadline = Date().addingTimeInterval(5)
@@ -40,7 +41,7 @@ final class GhosttyStartSizeTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: file) }
         let view = GhosttyTerminalView(
             launch: .init(command: "/bin/sh -c 'sleep 1; stty size > \(file.path); sleep 5'", workingDirectory: NSHomeDirectory()),
-            palette: .workspaceDark, startWhenSized: false)
+            theme: TerminalPalette.workspaceDark.ghosttyTheme, startWhenSized: false)
         let window = host(view)
         defer { view.terminate(); window.close() }
         let deadline = Date().addingTimeInterval(5)

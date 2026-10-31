@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import XCTest
+@testable import GhosttyTerminal
 @testable import SpaceManager
 
 /// 패널 분할과 에이전트 상태를 실제 창으로 찍는다. SEOL이 화면을 판정하는 데 쓴다.

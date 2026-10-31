@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import GhosttyTerminal
 
 /// Terminal view for a single session
 struct AgentTerminalView: View {
