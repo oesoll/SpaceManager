@@ -24,13 +24,15 @@ This boundary was added after real session-loss incidents. App deployment, windo
 
 Windows, sidebars, state, and navigation use SwiftUI and AppKit. Each terminal is a [libghostty](https://github.com/ghostty-org/ghostty) surface: it owns its PTY and child process and draws with Metal inside the app process. Keyboard and Korean IME handling follow Ghostty's own macOS view (`interpretKeyEvents` and `NSTextInputClient`, reusing the original key event when modifiers are unchanged).
 
-Terminals used to be a `WKWebView` running xterm.js. Every web view started its own WebKit content process, so four panes meant four more processes of tens of MB each (measured 10/31). With libghostty the first terminal adds about 18 MB to the app for Metal and font setup and each further terminal about 3 MB, with no helper processes. The palette and minimum contrast are the same values xterm used, and so is the font: Menlo with Apple SD Gothic Neo for Korean. terminal.html listed D2Coding first, but WebKit does not expose user-installed fonts to web content, so xterm always drew Menlo and the system Korean font; carrying the list over literally brought D2Coding back, which had already been rejected as tiring to read. sm writes its own Ghostty config and does not read the user's Ghostty settings.
+Terminals used to be a `WKWebView` running xterm.js. Every web view started its own WebKit content process, so four panes meant four more processes of tens of MB each (measured 10/31). With libghostty the first terminal adds about 18 MB to the app for Metal and font setup and each further terminal about 3 MB, with no helper processes. The palette and minimum contrast are the same values xterm used, and so is the font: Menlo, with Korean from the system fallback (Apple SD Gothic Neo). terminal.html listed D2Coding first, but WebKit does not expose user-installed fonts to web content, so xterm always drew Menlo and the system Korean font; carrying the list over literally brought D2Coding back, which had already been rejected as tiring to read. The Korean font is deliberately not named in the config: Ghostty treats a configured family as primary and skips its fallback size adjustment, so Hangul drew small inside its two cells and syllables spread apart like words. Left to the fallback, Ghostty scales it to Menlo's height, as native Ghostty does. sm writes its own Ghostty config and does not read the user's Ghostty settings.
 
 sm's build applies three small patches to libghostty (`scripts/ghostty-patches/`): `login(1)` runs quietly so no pane prints "Last login"; a pane without focus draws no cursor, not even Ghostty's hollow box, so only the pane that takes keys shows one; and two-cell glyphs (Korean from the system fallback font, which is narrower than two cells) are centred in their cells, in text and in the composing preedit, so the spacing is even and the preedit underline sits under the glyph.
 
 Workspace windows place a sidebar card and a terminal card on a flat canvas, separated by hairlines rather than shadows. Each sidebar row shows a folder icon (its color can be set per workspace from the context menu), the name, the activity dot, and where it runs (`mac`, `arch`, …). The sidebar button switches between the full sidebar and a compact rail of colored folder icons at the same vertical positions. Light and dark apply to the whole window, terminal palette included.
 
 The sidebar and terminal card move together with a fixed gap. The terminal viewport stays at its existing size during the transition and receives the final size once the animation ends, avoiding repeated tmux redraws. Tab switches retain the outgoing surface until the selected terminal has rendered, then fade between them.
+
+Layout tabs (workspaces drawn from session-layer data) that have been shown once stay mounted, stacked, and only the selected one is visible. Rebuilding a tab's panes on every switch stalled the main thread for 40–70 ms and showed empty cards for a frame before the reattached terminals drew (measured with `sm perf` and `sm capture --burst`). Hidden tabs' surfaces are occluded, so they do not render, take keys, hover focus, clicks, or the focus rim; the shown tab's focused pane takes the keyboard. Switching workspaces clears the stack.
 
 ### Activity comes from transcripts
 
@@ -270,10 +272,24 @@ sm quick new [--model M] [--effort E] [--proxy] [prompt…]
 sm quick resume <session-id>
 sm quick home
 
+sm capture [-w win] <file.png> [--rect x,y,w,h]   창을 찍는다(앱이 자기 창을 찍어 화면 기록 권한이 필요 없다)
+sm capture [-w win] --rect x,y,w,h --burst N [--every MS] [dir]
+                                    같은 자리를 N번 연달아 찍어 시각(ms)과 평균 색을 낸다
+sm perf [-w win] [seconds] [--do tab:N|tab:next|focus:next|ws:NAME] [--rect x,y,w,h]
+                                    메인 스레드가 놓친 프레임. --do는 0.3초 뒤 사람이 누르는 길로 한 번
+                                    움직이고, --rect는 같은 시간축에서 그 자리가 언제 바뀌고 멈췄는지 낸다
+
 sm activity                         에이전트 활동 (transcript 기반)
 sm state                            window-states.json 덤프
 sm ping
 ```
+
+`sm capture` and `sm perf` exist so an agent can check what a person reports on
+screen ("the fade stutters", "tab switches lag") without screen-recording
+permission. `--do` changes the window's state (its tab, focus, or workspace),
+so point it at a window nobody is using. The same measurement runs in isolation
+with `SM_CAPTURE=1 SM_CAPTURE_SCENE=tabswitch scripts/test-isolated.sh --filter
+PaneCaptureTests` (results in `.build/window-capture/tabswitch.json`).
 
 Options: `--json` prints the raw response, `-w/--window <id|index|front>`
 picks the window, `--no-focus` leaves the app in the background. `<ws>` is a

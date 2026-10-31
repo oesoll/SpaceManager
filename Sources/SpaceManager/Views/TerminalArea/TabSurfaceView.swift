@@ -17,6 +17,12 @@ private struct TabSurfaceContent: View {
     @ObservedObject var directory: PeerDirectory
     @ObservedObject var layouts: LayoutDirectory
     @ObservedObject var interaction: LayoutInteraction
+    /// 이 창에서 지금 워크스페이스의, 한 번이라도 보인 탭.
+    @State private var visited: (key: String, tabs: Set<String>) = ("", [])
+
+    private func remember(_ tab: String, in layoutKey: String) {
+        if visited.key != layoutKey { visited = (layoutKey, [tab]) } else if !visited.tabs.contains(tab) { visited.tabs.insert(tab) }
+    }
 
     /// 배치 데이터가 있는 워크스페이스면 그것을 그린다(tmux 탭 없이).
     private var layoutTab: (WorkspaceLayout, WorkspaceLayout.Tab, Workspace)? {
@@ -54,11 +60,29 @@ private struct TabSurfaceContent: View {
                 // 새 탭: 탭 전체가 고르는 상자 하나다.
                 PickerCardStandalone { newTabPicker(layout: layout) }
             } else if let (layout, tab, workspace) = layoutTab {
-                LayoutTabView(layout: layout, tab: tab, workspace: workspace, interaction: interaction,
-                              directory: directory) { pending in
-                    AnyView(layoutPicker(pending, layout: layout))
+                // 한 번 본 탭은 떼지 않고 겹쳐 둔다. 탭마다 새로 지으면 전환할 때마다 메인 스레드가 40–70ms
+                // 멈추고(프레임 2–4장), 다시 붙은 터미널이 첫 장면을 그리기 전까지 빈 카드가 비쳤다(10/31
+                // `sm perf`·`sm capture --burst` 실측). 겹쳐 두면 전환은 보이기만 바꾸는 일이다. 숨은 탭의
+                // 터미널은 그리지 않으므로(occlusion) GPU는 보이는 탭 몫만 쓴다. 워크스페이스를 바꾸면 비운다
+                // — 여러 워크스페이스의 탭을 다 들고 있으면 돌아올 때 한꺼번에 지어 오히려 느리다.
+                let layoutKey = LayoutDirectory.key(workspace: layout.workspace, host: layout.host)
+                let mounted = visited.key == layoutKey ? visited.tabs : []
+                ZStack {
+                    ForEach(layout.tabs.filter { $0.id == tab.id || mounted.contains($0.id) }) { each in
+                        let shown = each.id == tab.id
+                        LayoutTabView(layout: layout, tab: each, workspace: workspace, interaction: interaction,
+                                      directory: directory, picker: { pending in
+                            AnyView(layoutPicker(pending, layout: layout))
+                        }, isShown: shown)
+                        .opacity(shown ? 1 : 0)
+                        .allowsHitTesting(shown)
+                        .accessibilityHidden(!shown)
+                        .zIndex(shown ? 1 : 0)
+                    }
                 }
-                .id(LayoutInteraction.tabKey(layout, tab.id))
+                .id(layoutKey)
+                .onAppear { remember(tab.id, in: layoutKey) }
+                .onChange(of: LayoutInteraction.tabKey(layout, tab.id)) { _, _ in remember(tab.id, in: layoutKey) }
             } else if let group {
                 SplitTab(group: group, directory: directory)
             } else if appState.windowKind == .workspace {

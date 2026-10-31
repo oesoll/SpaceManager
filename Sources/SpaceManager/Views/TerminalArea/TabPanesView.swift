@@ -277,6 +277,8 @@ struct LayoutTabView: View {
     @ObservedObject var interaction: LayoutInteraction
     @ObservedObject var directory: PeerDirectory
     let picker: (LayoutInteraction.Pending) -> AnyView
+    /// 겹쳐 둔 탭 가운데 지금 보이는 탭인가. 숨은 탭은 포커스 테두리·호버·클릭·키 입력을 받지 않는다.
+    var isShown = true
     @State private var drag: (path: [Int], sizes: [Double])?
 
     private var workspaceKey: String { LayoutDirectory.key(workspace: layout.workspace, host: layout.host) }
@@ -333,6 +335,16 @@ struct LayoutTabView: View {
             }
             .coordinateSpace(name: TabPanesView.space)
         }
+        .environment(\.paneShown, isShown)
+        // 탭이 앞에 나오면 그 탭의 포커스된 패널이 바로 키를 받는다 — 전에는 떼어 낸 터미널과 함께 키 받을
+        // 곳이 사라져, 탭을 바꾼 뒤 한 번 눌러야 글자가 들어갔다.
+        .onAppear { if isShown { focusKeyboard() } }
+        .onChange(of: isShown) { _, shown in if shown { focusKeyboard() } }
+    }
+
+    private func focusKeyboard() {
+        guard let focused, pending == nil, layout.panes[focused] != nil || tab.root.paneIDs.contains(focused) else { return }
+        appState.layoutTerminals.session(for: focused, in: layout, workspace: workspace).focusTerminal()
     }
 
     @ViewBuilder
@@ -343,14 +355,14 @@ struct LayoutTabView: View {
             let session = appState.layoutTerminals.session(for: id, in: layout, workspace: workspace)
             PaneCard(session: session,
                      badge: badge(for: id, session: session),
-                     isFocused: multiple && focused == id,
+                     isFocused: isShown && multiple && focused == id,
                      isZoomed: zoomed,
-                     onFocus: { if focused != id { appState.focusLayoutPane(id, in: layout) } },
+                     onFocus: { if isShown && focused != id { appState.focusLayoutPane(id, in: layout) } },
                      onClose: multiple ? { appState.closeLayoutPane(id, in: layout) } : nil,
                      onZoom: { appState.zoomLayoutPane(id, in: layout) },
                      showsLegend: multiple,
                      legendAction: migrateAction(for: id, session: session),
-                     onHoverFocus: multiple && pending == nil && drag == nil ? {
+                     onHoverFocus: isShown && multiple && pending == nil && drag == nil ? {
                          guard focused != id else { return }
                          appState.focusLayoutPane(id, in: layout)
                          session.focusTerminal()

@@ -103,6 +103,7 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
     }
 
     func focusTerminal() {
+        guard isShown else { return }
         window?.makeFirstResponder(self)
     }
 
@@ -231,11 +232,30 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
                 })
             }
         }
-        guard let surface else { return }
-        // 창에서 떨어진 표면은 그리지 않는다 — 보이지 않는 탭이 GPU를 쓰지 않게.
-        ghostty_surface_set_occlusion(surface, window != nil)
+        guard surface != nil else { return }
+        updateOcclusion()
         if window != nil { viewDidChangeBackingProperties() }
         syncFocus()
+    }
+
+    /// 겹쳐 둔 탭 가운데 지금 보이는 탭의 터미널인가. 숨은 탭은 창에 붙어 있어도 그리지 않고, 키를 받지
+    /// 않는다 — 탭 전환이 터미널을 떼었다 붙이는 일이 되지 않게 겹쳐 두는데(10/31), 그때 숨은 에이전트에
+    /// 글자가 들어가면 안 된다.
+    var isShown = true {
+        didSet {
+            guard isShown != oldValue else { return }
+            // 키를 먼저 놓고 나서 그리기를 멈춘다. 반대로 하면 그리지 않는 채로 포커스가 바뀌어, 다시 보일 때
+            // 첫 장면에 그 패널만 비어 보였다(10/31 연속 캡처).
+            if !isShown, window?.firstResponder === self { window?.makeFirstResponder(nil) }
+            updateOcclusion()
+        }
+    }
+
+    /// 창에서 떨어졌거나 숨은 표면은 그리지 않는다 — 보이지 않는 탭이 GPU를 쓰지 않게. 다시 보이면 마지막
+    /// 장면이 그대로 남아 있다가 다음 프레임부터 이어 그린다(빈 카드가 비치지 않는다).
+    private func updateOcclusion() {
+        guard let surface else { return }
+        ghostty_surface_set_occlusion(surface, window != nil && isShown)
     }
 
     private var keyObservers: [NSObjectProtocol] = []

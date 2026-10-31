@@ -46,8 +46,9 @@ final class PaneCaptureTests: XCTestCase {
         func shell(_ id: UUID) -> TerminalSession {
             TerminalSession(id: id, kind: .shell, name: "zsh", workingDirectory: flatWorkspace.rootPath)
         }
-        if env["SM_CAPTURE_SCENE"] == "layout" {
-            try captureLayout(appState: appState, workspace: flatWorkspace, appearance: appearance, home: home)
+        if env["SM_CAPTURE_SCENE"] == "layout" || env["SM_CAPTURE_SCENE"] == "tabswitch" {
+            try captureLayout(appState: appState, workspace: flatWorkspace, appearance: appearance, home: home,
+                              measureTabs: env["SM_CAPTURE_SCENE"] == "tabswitch")
             return
         }
         if env["SM_CAPTURE_SCENE"] == "picker" {
@@ -155,7 +156,8 @@ final class PaneCaptureTests: XCTestCase {
     /// 세션 층의 배치 데이터를 그대로 그린다: 탭 둘, main은 왼쪽 하나와 오른쪽 위아래 둘(n-ary 트리).
     /// 오른쪽 아래는 아직 tmux에 남아 쉬는 에이전트라 "sm으로 옮기기"가 켜져 있다.
     @MainActor
-    private func captureLayout(appState: AppState, workspace: Workspace, appearance: String, home: URL) throws {
+    private func captureLayout(appState: AppState, workspace: Workspace, appearance: String, home: URL,
+                               measureTabs: Bool = false) throws {
         let host = PeerDirectory.shared.localHostName
         let folder = home.appendingPathComponent(".smux/state/sm/workspaces")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -218,7 +220,50 @@ final class PaneCaptureTests: XCTestCase {
             .appendingPathComponent(".build/window-capture")
         try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
         try png.write(to: out.appendingPathComponent("layout-\(appearance).png"))
+        if measureTabs { try measureTabSwitches(appState: appState, window: window, out: out) }
         for session in appState.layoutTerminals.all { session.cleanup(force: true) }
+    }
+
+    /// 탭 전환을 사람이 ⌘1·⌘2를 누르는 길로 여러 번 하고, 메인 스레드가 놓친 프레임과 화면이 바뀌고
+    /// 멈춘 시각을 잰다(`sm perf --do`와 같은 측정). 결과는 `.build/window-capture/tabswitch.json`.
+    @MainActor
+    private func measureTabSwitches(appState: AppState, window: NSWindow, out: URL) throws {
+        // main 탭에서 왼쪽 패널과 오른쪽 위 패널 사이 틈이 지나는 자리. engine 탭에서는 가운데 패널 안이다.
+        let watch = WindowProbe.screenRect(CGRect(x: 740, y: 150, width: 60, height: 40), in: window)
+        var rows: [[String: Any]] = []
+        for index in 0..<8 {
+            let target = index % 2 == 0 ? 1 : 0
+            var report: [String: Any]?
+            FrameProbe.run(window: window, seconds: 1.0, action: { appState.selectTab(at: target) }, watch: watch) {
+                report = $0
+            }
+            let deadline = Date().addingTimeInterval(10)
+            while report == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+            var row = try XCTUnwrap(report)
+            row["to"] = target == 1 ? "engine" : "main"
+            row["visit"] = index < 2 ? "first" : "again"
+            row.removeValue(forKey: "steps")
+            rows.append(row)
+            print("tabswitch", index, row["to"]!, "action_ms", row["action_ms"] ?? "-", "missed", row["missed"] ?? "-",
+                  "max", row["max"] ?? "-", "visible", row["visible_after"] ?? "-", "settled", row["settled_after"] ?? "-",
+                  "frames", row["distinct_frames"] ?? "-")
+        }
+        let data = try JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: out.appendingPathComponent("tabswitch.json"))
+
+        // 다시 오가는 전환 한 번을 창 전체로 연달아 찍는다 — 빈 카드가 한 장이라도 비치는지 눈으로 본다.
+        let frames = out.appendingPathComponent("tabswitch-frames")
+        try? FileManager.default.removeItem(at: frames)
+        let whole = WindowProbe.screenRect(CGRect(origin: .zero, size: window.frame.size), in: window)
+        var shots: [[String: Any]]?
+        WindowProbe.burst(windowNumber: window.windowNumber, screenRect: whole, count: 40, every: 0.012,
+                          folder: frames.path, duration: 0.6) { shots = $0 }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        let switchedAt = Date()
+        appState.selectTab(at: 1)
+        let deadline = Date().addingTimeInterval(10)
+        while shots == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        print("tabswitch-frames", (shots ?? []).count, "switch at", Int(switchedAt.timeIntervalSince1970 * 1000) % 100000)
     }
 
     /// 고르는 상자 시안: 왼쪽은 일하는 에이전트, 오른쪽은 ⌘D로 막 생긴 자리와 그 안의 상자.

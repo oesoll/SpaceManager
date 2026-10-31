@@ -58,9 +58,20 @@ private struct ReconnectingBadge: View {
 ///
 /// 선택 변경에도 컨테이너는 유지하고 캐시된 터미널만 교체한다. 화면 밖의
 /// SwiftUI 계층이 실제 창의 터미널을 빼앗지 않도록 창에 붙은 호스트만 claim한다.
+/// 겹쳐 둔 배치 탭 가운데 지금 보이는 탭 안인가(`LayoutTabView`가 정한다). 기본은 보인다.
+private struct PaneShownKey: EnvironmentKey { static let defaultValue = true }
+
+extension EnvironmentValues {
+    var paneShown: Bool {
+        get { self[PaneShownKey.self] }
+        set { self[PaneShownKey.self] = newValue }
+    }
+}
+
 struct SessionTerminalWrapper: NSViewRepresentable {
     let session: TerminalSession
     @EnvironmentObject private var terminalLayout: TerminalLayoutTransition
+    @Environment(\.paneShown) private var shown
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
@@ -76,7 +87,9 @@ struct SessionTerminalWrapper: NSViewRepresentable {
         syncPalette()
         terminalLayout.attach(host)
         host.animatesTransitions = !reduceMotion
-        host.show(session.getOrCreateTerminal())
+        let terminal = session.getOrCreateTerminal()
+        terminal.isShown = shown
+        host.show(terminal)
         return host
     }
 
@@ -84,9 +97,11 @@ struct SessionTerminalWrapper: NSViewRepresentable {
         syncPalette()
         terminalLayout.attach(host)
         host.animatesTransitions = !reduceMotion
-        let changed = host.show(session.getOrCreateTerminal())
+        let terminal = session.getOrCreateTerminal()
+        terminal.isShown = shown
+        let changed = host.show(terminal)
         // 포커스는 실제 화면에 있는 계층에서만
-        if changed && host.window != nil {
+        if changed && host.window != nil && shown {
             session.focusTerminal()
         }
     }
