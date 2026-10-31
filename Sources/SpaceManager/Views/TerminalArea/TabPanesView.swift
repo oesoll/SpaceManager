@@ -109,7 +109,7 @@ private struct PaneCard: View {
             guard inside, let onHoverFocus else { return }
             let work = DispatchWorkItem(block: onHoverFocus)
             hoverWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
         }
     }
 }

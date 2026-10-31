@@ -93,7 +93,7 @@ private struct TabChip: View {
                 .fill(item.isActive ? Color(Chrome.accent).opacity(0.16)
                                     : Color(isHovering ? Chrome.hover : .clear))
         }
-        .animation(.easeInOut(duration: 0.25), value: item.isActive)
+        .animation(.easeOut(duration: 0.15), value: item.isActive)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture(count: 2) { rename() }

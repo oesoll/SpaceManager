@@ -39,8 +39,9 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     /// 지금 화면에 붙은 터미널. libghostty 표면이 PTY와 자식 프로세스를 직접 쥔다.
     private(set) var terminalView: GhosttyTerminalView?
     /// 작업 창의 라이트/다크를 따른다. 터미널이 아직 없으면 만들 때 이 값을 쓴다.
+    /// 화면이 다시 그려질 때마다 같은 값이 다시 들어온다 — 바뀐 때만 표면 설정을 다시 건다.
     var palette: TerminalPalette {
-        didSet { terminalView?.setPalette(palette) }
+        didSet { if palette != oldValue { terminalView?.setPalette(palette) } }
     }
     private var started = false
     private var quickSessionId: String?

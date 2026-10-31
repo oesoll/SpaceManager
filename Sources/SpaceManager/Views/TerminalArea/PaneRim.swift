@@ -6,8 +6,10 @@ import AppKit
 /// 색이 바로 바뀌지 않고 페이드로 넘어간다.
 ///
 /// 회전은 Core Animation에 맡겨 렌더 서버에서 돈다 — SwiftUI 애니메이션은 매 프레임 메인 스레드를
-/// 깨워 CPU를 쓴다(사이드바 스피너에서 실측한 이유와 같다). 포커스가 없는 카드는 회전을 멈춘다.
-/// 동작 줄이기를 켜면 돌지 않고 옅은 분홍 테두리만 남는다.
+/// 깨워 CPU를 쓴다(사이드바 스피너에서 실측한 이유와 같다). 다만 도는 그라데이션은 카드만 한 층이라
+/// 창 서버가 매 프레임 카드 전체를 다시 합성한다. 120Hz로 두 창이 돌자 WindowServer가 35% 안팎을
+/// 계속 썼다(10/31 실측). 그래서 초당 20번으로 묶고(8초 한 바퀴엔 충분히 매끄럽다), 지금 앞에 있는
+/// 창의 포커스된 카드만 돌린다. 동작 줄이기를 켜면 돌지 않고 옅은 분홍 테두리만 남는다.
 struct PaneRim: View {
     let isFocused: Bool
     var radius: CGFloat = TabPanesView.radius
@@ -21,7 +23,8 @@ struct PaneRim: View {
             FlowingRim(isActive: isFocused, radius: radius, moves: !reduceMotion)
                 .opacity(isFocused ? 1 : 0)
         }
-        .animation(.easeInOut(duration: 0.3), value: isFocused)
+        // 0.3초는 손이 먼저 가 있는 사람에게 굼뜨게 느껴졌다(SEOL 10/31 "버벅거린다").
+        .animation(.easeOut(duration: 0.15), value: isFocused)
         .allowsHitTesting(false)
     }
 }
@@ -97,6 +100,9 @@ final class FlowingRimView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         viewDidChangeEffectiveAppearance()
+        observeWindow()
+        // 창에 다시 붙으면 CA가 지운 애니메이션을 새로 건다.
+        gradient.removeAnimation(forKey: "spin")
         refreshAnimation()
     }
 
@@ -106,15 +112,45 @@ final class FlowingRimView: NSView {
         refreshAnimation()
     }
 
-    /// 창에서 떨어지면 CA가 애니메이션을 지우므로 붙을 때마다 다시 건다. 포커스가 없으면 멈춘다.
+    private var windowObservers: [NSObjectProtocol] = []
+
+    /// 창에서 떨어지면 CA가 애니메이션을 지우므로 붙을 때마다 다시 건다. 포커스가 없거나, 이 창이
+    /// 앞에 있지 않으면(다른 창·다른 앱을 보는 중) 멈춘다 — 보지 않는 곳에서 창 서버를 쓰지 않게.
     private func refreshAnimation() {
-        gradient.removeAnimation(forKey: "spin")
-        guard isActive, window != nil else { return }
+        let running = gradient.animation(forKey: "spin") != nil
+        let shouldRun = isActive && window?.isKeyWindow == true && NSApp.isActive
+        guard running != shouldRun else { return }
+        guard shouldRun else {
+            gradient.removeAnimation(forKey: "spin")
+            return
+        }
         let spin = CABasicAnimation(keyPath: "transform.rotation.z")
         spin.fromValue = 0
         spin.toValue = -2 * Double.pi
         spin.duration = Self.period
         spin.repeatCount = .infinity
+        spin.preferredFrameRateRange = CAFrameRateRange(minimum: 10, maximum: 20, preferred: 20)
         gradient.add(spin, forKey: "spin")
+    }
+
+    private func observeWindow() {
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
+        windowObservers = []
+        guard let window else { return }
+        let center = NotificationCenter.default
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            windowObservers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                self?.refreshAnimation()
+            })
+        }
+        for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+            windowObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.refreshAnimation()
+            })
+        }
+    }
+
+    deinit {
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
     }
 }
