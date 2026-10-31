@@ -25,6 +25,12 @@ private struct TabSurfaceContent: View {
         return (layout, tab, workspace)
     }
 
+    /// 이 워크스페이스에 배치가 있는지 아직 모른다 — 빈 카드로 기다린다(옛 탭을 먼저 붙이지 않는다).
+    private var layoutUndecided: Bool {
+        guard appState.windowKind == .workspace, let workspace = appState.selectedWorkspace else { return false }
+        return !layouts.isSettled(appState.layoutKey(for: workspace), remote: workspace.isRemote)
+    }
+
     /// 이 창이 따라갈 원격 배치(선택된 원격 워크스페이스 하나).
     private var remoteLayoutKeys: Set<String> {
         guard appState.windowKind == .workspace, let workspace = appState.selectedWorkspace, workspace.isRemote else { return [] }
@@ -39,7 +45,12 @@ private struct TabSurfaceContent: View {
 
     var body: some View {
         Group {
-            if let (layout, tab, workspace) = layoutTab {
+            if layoutUndecided {
+                Color(Chrome.pane)
+                    .clipShape(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous)
+                        .strokeBorder(Color(Chrome.hairline), lineWidth: 1))
+            } else if let (layout, tab, workspace) = layoutTab {
                 LayoutTabView(layout: layout, tab: tab, workspace: workspace, interaction: interaction,
                               directory: directory) { pending in
                     AnyView(layoutPicker(pending, layout: layout))
@@ -79,6 +90,10 @@ private struct TabSurfaceContent: View {
             appState.pruneLayoutTerminals()
             // 파일이 따라잡았으면 화면 쪽 임시 상태를 걷는다.
             if let layout = layoutTab?.0 { appState.settleLayoutOverrides(layout) }
+            closeLegacyTerminalsIfLayoutShown()
+        }
+        .onChange(of: appState.selectedWorkspace?.id) { _, _ in
+            closeLegacyTerminalsIfLayoutShown()
         }
         .onChange(of: viewingKey) { _, key in
             directory.setViewing(key, owner: appState.windowStateId)
@@ -94,6 +109,15 @@ private struct TabSurfaceContent: View {
 }
 
 extension TabSurfaceContent {
+    /// 배치로 보이는 워크스페이스의 옛 탭(tmux attach 등)이 이미 붙어 있으면 뗀다. 같은 에이전트를
+    /// tmux 보기 창과 sm 패널이 함께 붙들면 창 크기를 서로 바꾼다. tmux 세션 자체는 그대로 둔다.
+    fileprivate func closeLegacyTerminalsIfLayoutShown() {
+        guard layoutTab != nil else { return }
+        for session in appState.sessions where session.terminalView != nil {
+            session.cleanup()
+        }
+    }
+
     /// 배치 탭의 고르는 상자. 확정하면 세션 층의 split 하나로 배치와 세션이 함께 생긴다.
     @ViewBuilder
     fileprivate func layoutPicker(_ pending: LayoutInteraction.Pending, layout: WorkspaceLayout) -> some View {

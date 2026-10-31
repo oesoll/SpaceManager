@@ -11,6 +11,16 @@ final class LayoutDirectory: ObservableObject {
 
     /// "워크스페이스@기기" → 배치.
     @Published private(set) var layouts: [String: WorkspaceLayout] = [:]
+    /// 이 맥의 배치 폴더를 한 번이라도 읽었는가. 그 전에는 배치가 "없다"고 단정하지 않는다 —
+    /// 단정하면 옛 tmux 탭이 먼저 붙어 버린다(10/31 설치 직후 실제로 tmux attach가 하나 남았다).
+    @Published private(set) var hasLoadedLocal = false
+    /// 원격 배치의 첫 답(배치 한 줄, 또는 끝내 답이 없음)을 받은 키.
+    @Published private(set) var settledRemote = Set<String>()
+
+    /// 이 키의 배치가 있는지 없는지 이제 아는가.
+    func isSettled(_ key: String, remote: Bool) -> Bool {
+        remote ? settledRemote.contains(key) || layouts[key] != nil : hasLoadedLocal
+    }
 
     private let folder: URL
     private let watcher = DirectoryWatcher()
@@ -77,10 +87,12 @@ final class LayoutDirectory: ObservableObject {
         }
         localKeys = Set(found.keys)
         if next != layouts { layouts = next }
+        if !hasLoadedLocal { hasLoadedLocal = true }
     }
 
     fileprivate func receiveRemote(_ layout: WorkspaceLayout) {
         let key = Self.key(workspace: layout.workspace, host: layout.host)
+        settledRemote.insert(key)
         guard layouts[key] != layout else { return }
         layouts[key] = layout
     }
@@ -95,6 +107,8 @@ final class LayoutDirectory: ObservableObject {
             let follower = RemoteFollower(key: key) { [weak self] layout in self?.receiveRemote(layout) }
             followers[key] = follower
             follower.start()
+            // 기기가 잠들었거나 배치가 없으면 첫 줄이 오지 않는다. 오래 비워 두지 않고 옛 방식으로 보인다.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.settledRemote.insert(key) }
         }
     }
 }
