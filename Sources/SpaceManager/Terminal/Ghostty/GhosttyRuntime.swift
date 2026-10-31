@@ -184,8 +184,10 @@ enum GhosttyConfigText {
             // WebKit은 사용자가 설치한 글꼴(~/Library/Fonts)을 웹 콘텐츠에 보이지 않아 실제로는
             // Menlo와 시스템 한글 글꼴로 그려졌다(10/31 WKWebView 글자 폭 실측). 그 목록을 그대로
             // 옮겼더니 D2Coding이 나와 "눈이 아프다"(SEOL 10/31) — 내장 D2Coding을 철회했던 이유와 같다.
+            // 한글 글꼴은 적지 않는다. 적으면 Ghostty가 주 글꼴로 보고 크기 보정을 건너뛰어, 두 칸 안에서
+            // 한글이 작게 그려져 음절 사이가 단어 사이처럼 벌어졌다(10/31 실제 창 캡처). 비워 두면 시스템이
+            // 같은 Apple SD Gothic Neo를 대체 글꼴로 고르고, Ghostty가 Menlo 높이에 맞춰 키운다(네이티브 Ghostty와 같다).
             "font-family = Menlo",
-            "font-family = Apple SD Gothic Neo",
             "font-size = 13",
             "cursor-style = bar",
             "cursor-style-blink = true",

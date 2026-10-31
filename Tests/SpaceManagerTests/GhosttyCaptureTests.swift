@@ -16,6 +16,8 @@ final class GhosttyCaptureTests: XCTestCase {
         printf '  \\033[2m⎿  PriceRow는 Math.round, OrderSummary는 Math.floor\\033[0m\\n\\n'
         for i in 0 1 2 3 4 5 6 7; do printf "\\033[3${i}m■ 3$i \\033[9${i}m■ 9$i\\033[0m  "; done; printf '\\n\\n'
         printf '\\033[38;5;210m✻\\033[0m Running tests… \\033[2m(38s · esc to interrupt)\\033[0m\\n\\n'
+        printf '  - 크몽 발신, 크몽 브라우저 작업, 혜성로 메일 회신 카드가 모두 이 목록에 있어.\\n'
+        printf '  - 알림에는 "승인할 카드 N개"만 들어가. 고객 이름, 원문은 안 넣어.\\n\\n'
         printf '> 결제 금액을 다시 '
         sleep 30
         """.write(to: script, atomically: true, encoding: .utf8)
