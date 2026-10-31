@@ -1,16 +1,21 @@
 // swift-tools-version:5.9
+import Foundation
 import PackageDescription
+
+// libghostty 터미널 층. Fine과 같은 엔진·패치·입력 처리를 함께 쓴다(10/31 sm에서 떼어 냄).
+// 형제 폴더(../GhosttyTerminal)가 있으면 그것을 쓴다 — 엔진을 고치는 이 맥이 그렇다. 없으면(남의 클론)
+// 공개 저장소의 릴리스를 쓰고, 그 릴리스에 미리 빌드한 엔진이 들어 있다(Apple Silicon 전용).
+let sibling = Context.packageDirectory + "/../GhosttyTerminal/Package.swift"
+let terminal: Package.Dependency = FileManager.default.fileExists(atPath: sibling)
+    ? .package(path: "../GhosttyTerminal")
+    : .package(url: "https://github.com/oesoll/GhosttyTerminal.git", from: "0.1.0")
 
 let package = Package(
     name: "SpaceManager",
     platforms: [
         .macOS(.v14)
     ],
-    dependencies: [
-        // libghostty 터미널 층. Fine과 같은 엔진·패치·입력 처리를 함께 쓴다(10/31 sm에서 떼어 냄).
-        // 그 패키지의 scripts/build-ghostty.sh가 GhosttyKit.xcframework를 만든다.
-        .package(path: "../GhosttyTerminal")
-    ],
+    dependencies: [terminal],
     targets: [
         .executableTarget(
             name: "SpaceManager",

@@ -86,14 +86,14 @@ Quick conversations run Claude Code, found on your PATH. Their working directory
 ```sh
 git clone https://github.com/NEWBIE0413/SpaceManager.git
 cd SpaceManager
-brew install zig            # 0.17, needed once to build libghostty
-sh ../GhosttyTerminal/scripts/build-ghostty.sh  # pinned Ghostty commit → ../GhosttyTerminal/Frameworks/GhosttyKit.xcframework
 ./scripts/test-isolated.sh
 swift build -c release
 .build/release/SpaceManager
 ```
 
-`build-ghostty.sh` (in `../GhosttyTerminal`, a sibling checkout) clones Ghostty into `~/.cache/sm-ghostty`, applies its `scripts/ghostty-patches/`, and builds the static library (about 140 MB, not committed). SwiftPM then produces the executable. This repository does not currently include a general-purpose `.app` packaging script.
+The terminal layer comes from [GhosttyTerminal](https://github.com/oesoll/GhosttyTerminal) 0.1.0 or later, whose release carries a prebuilt libghostty, so no Zig is needed. That engine is built for Apple Silicon only; an Intel Mac has to build it (below).
+
+To work on the engine, check GhosttyTerminal out next to this repository (`../GhosttyTerminal`). `Package.swift` uses that sibling whenever it exists. Its `scripts/build-ghostty.sh` needs Zig 0.17 (`brew install zig`), clones Ghostty into `~/.cache/sm-ghostty`, applies `scripts/ghostty-patches/`, and builds the static library into its `Frameworks/` (about 140 MB, not committed). This repository does not currently include a general-purpose `.app` packaging script.
 
 The test wrapper gives Foundation a temporary home directory because some window-state tests instantiate the application's storage singleton. Scanner benchmarks use synthetic transcripts: `python3 scripts/benchmark-scanners.py`. See [the resource optimization measurements](docs/performance/2026-09-09-scanners.md) for the comparison and its limits.
 
