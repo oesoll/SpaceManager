@@ -221,7 +221,43 @@ final class PaneCaptureTests: XCTestCase {
         try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
         try png.write(to: out.appendingPathComponent("layout-\(appearance).png"))
         if measureTabs { try measureTabSwitches(appState: appState, window: window, out: out) }
+        if ProcessInfo.processInfo.environment["SM_CAPTURE_SPLIT"] == "1" {
+            try measureSplitMotion(appState: appState, layout: layout, workspace: workspace, window: window, out: out)
+        }
         for session in appState.layoutTerminals.all { session.cleanup(force: true) }
+    }
+
+    /// ⌘D(고르는 상자 자리 열기)와 취소: 카드가 몇 장면에 걸쳐 움직이는지, 메인 스레드가 프레임을 놓치는지,
+    /// 움직이는 동안 왼쪽 터미널이 크기를 몇 번 받는지 잰다(받을 때마다 에이전트가 다시 그린다).
+    @MainActor
+    private func measureSplitMotion(appState: AppState, layout: WorkspaceLayout, workspace: Workspace,
+                                    window: NSWindow, out: URL) throws {
+        let left = try XCTUnwrap(appState.layoutTerminals.session(for: "p-a", in: layout, workspace: workspace).terminalView)
+        // 왼쪽 패널 오른쪽 끝(나누면 왼쪽으로 물러난다)이 지나는 가는 띠.
+        let watch = WindowProbe.screenRect(CGRect(x: 380, y: 200, width: 400, height: 6), in: window)
+        for (label, action) in [("open", { appState.beginLayoutSplit(.horizontal, in: layout) }),
+                                ("cancel", { appState.cancelLayoutSplit() })] as [(String, () -> Void)] {
+            let before = left.sizeChanges
+            var report: [String: Any]?
+            FrameProbe.run(window: window, seconds: 1.2, action: action, watch: watch) { report = $0 }
+            // 움직이는 도중(동작 0.3초 뒤에 일어나므로 0.42초 지점 = 움직임 시작 0.12초 뒤) 한 장.
+            RunLoop.main.run(until: Date().addingTimeInterval(0.42))
+            if let mid = try? capture(window) {
+                try? NSBitmapImageRep(cgImage: mid).representation(using: .png, properties: [:])?
+                    .write(to: out.appendingPathComponent("split-\(label)-mid.png"))
+            }
+            let deadline = Date().addingTimeInterval(10)
+            while report == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            let row = try XCTUnwrap(report)
+            // 움직임이 끝난 뒤의 모습(열기: 고르는 상자 자리가 생겼는가).
+            let settled = try capture(window)
+            try XCTUnwrap(NSBitmapImageRep(cgImage: settled).representation(using: .png, properties: [:]))
+                .write(to: out.appendingPathComponent("split-\(label).png"))
+            print("split", label, "missed", row["missed"] ?? "-", "max", row["max"] ?? "-", "visible", row["visible_after"] ?? "-",
+                  "settled", row["settled_after"] ?? "-", "frames", row["distinct_frames"] ?? "-",
+                  "terminal resized", left.sizeChanges - before, "times")
+        }
     }
 
     /// 탭 전환을 사람이 ⌘1·⌘2를 누르는 길로 여러 번 하고, 메인 스레드가 놓친 프레임과 화면이 바뀌고

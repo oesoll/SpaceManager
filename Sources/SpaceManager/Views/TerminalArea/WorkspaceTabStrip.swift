@@ -28,6 +28,7 @@ struct WorkspaceTabStrip: View {
 
     @State private var dragging: String?
     @State private var dropIndex: Int?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let height: CGFloat = 24
 
@@ -58,6 +59,8 @@ struct WorkspaceTabStrip: View {
                     NewTabChip(action: onNew)
                 }
                 .padding(.horizontal, 2)
+                // 탭이 생기고 닫히고 자리를 바꾸면 이웃 칩이 미끄러져 자리를 내준다(튀지 않는 스프링).
+                .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 1.0), value: items.map(\.id))
             }
             .onChange(of: items.first(where: \.isActive)?.id) { _, active in
                 // herdr처럼 활성 탭이 보이게 민다.

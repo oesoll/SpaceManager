@@ -280,18 +280,50 @@ struct LayoutTabView: View {
     /// 겹쳐 둔 탭 가운데 지금 보이는 탭인가. 숨은 탭은 포커스 테두리·호버·클릭·키 입력을 받지 않는다.
     var isShown = true
     @State private var drag: (path: [Int], sizes: [Double])?
+    @EnvironmentObject private var terminalLayout: TerminalLayoutTransition
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// 배치가 바뀌면(나누기·닫기·확대·고르는 상자 자리) 카드가 새 자리로 미끄러진다. 튀지 않는 스프링이다 —
+    /// 사람이 던진 움직임이 아니라 명령의 결과라서 넘쳤다 돌아올 까닭이 없다(apple-design: damping 1.0).
+    static let layoutSpring = Animation.spring(response: 0.32, dampingFraction: 1.0)
+    /// 위 스프링이 눈에 띄게 움직이는 시간. 그동안 터미널은 크기를 그대로 두고, 멈춘 뒤 한 번만 새 크기를 받는다 —
+    /// 프레임마다 크기를 바꾸면 에이전트가 프레임마다 화면을 다시 그린다.
+    static let layoutSettle: TimeInterval = 0.42
+
+    /// 애니메이션을 거는 모양: 끄는 중의 몫은 넣지 않는다(끄는 동안은 손을 1:1로 따라가야 한다).
+    private struct Shape: Equatable {
+        let root: LayoutNode
+        let zoom: String?
+    }
 
     private var workspaceKey: String { LayoutDirectory.key(workspace: layout.workspace, host: layout.host) }
 
     /// 지금 그릴 트리: 파일 → 놓은 직후의 모양 → 끄는 중의 모양 → 상자 자리.
     private var root: LayoutNode {
-        var node = tab.root
-        if let held = interaction.rootOverride, held.key == LayoutInteraction.tabKey(layout, tab.id), layout.version < held.until {
-            node = held.root
-        }
+        var node = settledRoot
         if let drag { node = node.resizing(path: drag.path, sizes: drag.sizes) }
         if let pending { node = node.inserting(pending.paneID, beside: pending.beside, dir: pending.dir) }
         return node
+    }
+
+    /// 파일 → 놓은 직후의 모양(끄는 중 제외).
+    private var settledRoot: LayoutNode {
+        if let held = interaction.rootOverride, held.key == LayoutInteraction.tabKey(layout, tab.id), layout.version < held.until {
+            return held.root
+        }
+        return tab.root
+    }
+
+    private var shape: Shape {
+        var node = settledRoot
+        if let pending { node = node.inserting(pending.paneID, beside: pending.beside, dir: pending.dir) }
+        return Shape(root: node, zoom: pending == nil ? tab.zoom : nil)
+    }
+
+    private func holdTerminalsWhileMoving() {
+        guard isShown, !reduceMotion else { return }
+        let transition = terminalLayout.begin()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.layoutSettle) { terminalLayout.finish(transition) }
     }
 
     private var pending: LayoutInteraction.Pending? {
@@ -322,6 +354,9 @@ struct LayoutTabView: View {
                         paneView(id, multiple: multiple, zoomed: zoomed != nil)
                             .frame(width: frame.width, height: frame.height)
                             .offset(x: frame.minX, y: frame.minY)
+                            // 새 자리(고르는 상자)는 이웃 아래에 깔려, 이웃이 물러나는 만큼 드러난다. 최종 자리에
+                            // 먼저 떠서 아직 줄어드는 이웃 위에 겹쳐 비치지 않게. 확대되는 패널은 맨 위에서 커진다.
+                            .zIndex(id == pending?.paneID ? 0 : id == zoomed ? 2 : 1)
                     }
                 }
                 ForEach(Array(boundaries.enumerated()), id: \.offset) { _, boundary in
@@ -334,7 +369,9 @@ struct LayoutTabView: View {
                 }
             }
             .coordinateSpace(name: TabPanesView.space)
+            .animation(isShown && !reduceMotion ? Self.layoutSpring : nil, value: shape)
         }
+        .onChange(of: shape) { _, _ in holdTerminalsWhileMoving() }
         .environment(\.paneShown, isShown)
         // 탭이 앞에 나오면 그 탭의 포커스된 패널이 바로 키를 받는다 — 전에는 떼어 낸 터미널과 함께 키 받을
         // 곳이 사라져, 탭을 바꾼 뒤 한 번 눌러야 글자가 들어갔다.

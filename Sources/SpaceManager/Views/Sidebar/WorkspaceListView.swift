@@ -9,6 +9,7 @@ struct WorkspaceListView: View {
     @ObservedObject private var peers = PeerDirectory.shared
     @ObservedObject private var layouts = LayoutDirectory.shared
     @State private var draggingWorkspace: Workspace?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// 이 워크스페이스(루트 및 하위 경로)에서의 마지막 Claude 대화 시각
     private func lastConversation(for workspace: Workspace) -> Date? {
@@ -132,6 +133,8 @@ struct WorkspaceListView: View {
                 .padding(.horizontal, 6)
             }
         }
+        // 끌어서 순서를 바꾸면 다른 행이 미끄러져 자리를 내준다. 고르기·호버는 그대로 즉시다(macOS 사이드바처럼).
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 1.0), value: appState.workspaces.map(\.id))
     }
 
     private func changeHost(_ workspace: Workspace, to host: String) {

@@ -11,6 +11,13 @@ import AppKit
 /// - 쉼·다른 에이전트 대기·모름: 표시 없음. 대부분이 여기라 위의 넷이 보인다.
 struct AgentStateMark: View {
     let attention: AgentAttention?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// 상태가 바뀌면 새 표시가 제자리에서 살짝 커지며 나타난다 — 곁눈으로도 "방금 바뀌었다"가 보이게.
+    /// 튀지 않는다. 동작 줄이기에서는 겹쳐 바뀌기만 한다.
+    private var change: AnyTransition {
+        reduceMotion ? .opacity : .scale(scale: 0.55).combined(with: .opacity)
+    }
 
     var body: some View {
         ZStack {
@@ -19,18 +26,23 @@ struct AgentStateMark: View {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color(Chrome.accent))
+                    .transition(change)
             case .error:
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(Color.reconnectAmber)
+                    .transition(change)
             case .working:
                 StateSpinner().frame(width: 11, height: 11)
+                    .transition(change)
             case .done:
                 Circle().fill(Color(Chrome.textPrimary)).frame(width: 5, height: 5)
+                    .transition(change)
             default:
                 EmptyView()
             }
         }
+        .animation(.spring(response: 0.3, dampingFraction: 1.0), value: attention)
         .frame(width: 14, height: 14)
         .accessibilityLabel(attention.map(AgentStateMark.spokenName) ?? "")
     }
