@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// 워크스페이스 배치를 읽어 둔다. 모든 창이 같은 것을 보므로 하나만 돈다.
 ///
@@ -32,6 +32,12 @@ final class LayoutDirectory: ObservableObject {
 
     init(folder: URL = URL(fileURLWithPath: NSHomeDirectory() + "/.smux/state/sm/workspaces")) {
         self.folder = folder
+        // 앱이 끝나도 자식 프로세스(watch의 ssh)는 저절로 끝나지 않는다. 남으면 다음 실행과 겹친다.
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
+                                               queue: .main) { [weak self] _ in
+            self?.followers.values.forEach { $0.stop() }
+            self?.followers = [:]
+        }
     }
 
     static func key(workspace: String, host: String) -> String { workspace + "@" + host }
@@ -114,6 +120,7 @@ final class LayoutDirectory: ObservableObject {
 }
 
 /// 원격 워크스페이스 하나의 `sm-session watch` 스트림. 끊기면 잠시 뒤 다시 붙는다(기기가 잠든 동안 등).
+/// watch는 20초마다 heartbeat 한 줄을 낸다. 45초 넘게 아무 줄도 없으면 ssh가 조용히 멈춘 것으로 보고 다시 붙는다.
 private final class RemoteFollower {
     let key: String
     private let onLayout: (WorkspaceLayout) -> Void
@@ -121,6 +128,9 @@ private final class RemoteFollower {
     private var buffer = Data()
     private var stopped = false
     private var retry = 0
+    private var lastLine = Date()
+    private var silenceTimer: Timer?
+    static let silenceLimit: TimeInterval = 45
 
     init(key: String, onLayout: @escaping (WorkspaceLayout) -> Void) {
         self.key = key
@@ -150,6 +160,12 @@ private final class RemoteFollower {
         }
         do { try process.run() } catch { scheduleRestart(); return }
         self.process = process
+        lastLine = Date()
+        silenceTimer?.invalidate()
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            guard let self, let process = self.process, Date().timeIntervalSince(self.lastLine) > Self.silenceLimit else { return }
+            process.terminate()   // terminationHandler가 다시 띄운다
+        }
     }
 
     private func consume(_ chunk: Data) {
@@ -157,6 +173,8 @@ private final class RemoteFollower {
         while let newline = buffer.firstIndex(of: 0x0A) {
             let line = buffer[buffer.startIndex..<newline]
             buffer.removeSubrange(buffer.startIndex...newline)
+            lastLine = Date()
+            // 배치 줄에는 tabs가 있고 heartbeat 줄에는 없다. heartbeat는 살아 있다는 표시뿐이다.
             if let layout = try? WorkspaceLayout.decode(Data(line)) {
                 retry = 0
                 onLayout(layout)
@@ -166,6 +184,8 @@ private final class RemoteFollower {
 
     private func scheduleRestart() {
         process = nil
+        silenceTimer?.invalidate()
+        silenceTimer = nil
         guard !stopped else { return }
         retry += 1
         let delay = min(30, 2 * pow(2, Double(min(retry, 4))))
@@ -174,6 +194,8 @@ private final class RemoteFollower {
 
     func stop() {
         stopped = true
+        silenceTimer?.invalidate()
+        silenceTimer = nil
         process?.terminate()
         process = nil
     }
