@@ -196,3 +196,48 @@ private extension Data {
         return try! JSONSerialization.data(withJSONObject: obj)
     }
 }
+
+/// tmux가 sm 터미널에 동기화 출력을 보내게 하는 줄. 없으면 Claude가 다시 그릴 때 깜빡이고 커서가 튄다.
+final class TmuxSyncOutputTests: XCTestCase {
+    func testEveryAttachPathEnablesSyncBeforeAttaching() {
+        let scripts = [
+            TmuxBootstrap.attachOrCreateScript(sessionName: "ws", workingDirectory: "/tmp"),
+            TmuxBootstrap.coldBootScript(sessionName: "ws", workingDirectory: "/tmp", birther: true),
+            TmuxBootstrap.remoteStartupScript(sessionName: "ws", remoteDirectory: .relativeToHome("p")),
+        ]
+        for script in scripts {
+            let sync = script.range(of: TmuxBootstrap.syncOutputLine)
+            let attach = script.range(of: "exec tmux attach-session", options: .backwards)
+            XCTAssertNotNil(sync, script)
+            if let sync, let attach { XCTAssertLessThan(sync.lowerBound, attach.lowerBound) }
+        }
+    }
+
+    /// 실제 tmux에서: 여러 번 attach해도 한 줄만 남고, 클라이언트 기능 목록에 sync가 들어간다.
+    func testLineIsIdempotentOnARealServer() throws {
+        guard let tmux = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
+            .first(where: FileManager.default.isExecutableFile(atPath:)) else { throw XCTSkip("no tmux") }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("smtmux-\(UUID().uuidString.prefix(6))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func run(_ script: String) -> String {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/sh")
+            p.arguments = ["-c", script]
+            var env = ProcessInfo.processInfo.environment
+            env["TMUX_TMPDIR"] = dir.path
+            env["PATH"] = (tmux as NSString).deletingLastPathComponent + ":/usr/bin:/bin"
+            env.removeValue(forKey: "TMUX")
+            p.environment = env
+            let out = Pipe(); p.standardOutput = out; p.standardError = out
+            try? p.run(); p.waitUntilExit()
+            return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        }
+        _ = run("tmux new-session -d -s t")
+        defer { _ = run("tmux kill-server") }
+        _ = run(TmuxBootstrap.syncOutputLine)
+        _ = run(TmuxBootstrap.syncOutputLine)
+        let features = run("tmux show -s terminal-features")
+        XCTAssertEqual(features.components(separatedBy: "xterm-256color:sync").count - 1, 1, features)
+    }
+}

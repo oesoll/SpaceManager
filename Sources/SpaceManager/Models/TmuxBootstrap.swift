@@ -24,9 +24,18 @@ enum TmuxBootstrap {
         let dir = workingDirectory.shQuoted
         return """
         tmux has-session -t \(name) 2>/dev/null || tmux new-session -d -s \(name) -c \(dir)
+        \(syncOutputLine)
         exec tmux attach-session -t \(name)
         """
     }
+
+    /// sm 터미널(libghostty)은 동기화 출력(DEC 2026)을 그린다. tmux는 클라이언트를 `ghostty`로 알아보면서도
+    /// TERM이 xterm-256color라 이 기능을 켜지 않는다(10/31 `client_termfeatures` 실측). 그러면 Claude가
+    /// 화면을 다시 그릴 때 tmux가 조각난 중간 상태를 보내고, 빠른 렌더러가 그것을 그대로 그려 입력줄이
+    /// 깜빡이고 커서가 엉뚱한 곳으로 튄다(SEOL 10/31). attach 직전에 한 번만 더한다 — `-a`라
+    /// 확인 없이 매번 부르면 같은 줄이 쌓인다. 모르는 터미널은 이 시퀀스를 무시하므로 다른 클라이언트에 해가 없다.
+    static let syncOutputLine =
+        "tmux show -s terminal-features 2>/dev/null | grep -q 'xterm-256color:sync' || tmux set -as terminal-features 'xterm-256color:sync' 2>/dev/null"
 
     // MARK: - 콜드 부트 (tmux 서버가 없는 상태에서의 첫 기동)
 
@@ -158,6 +167,7 @@ enum TmuxBootstrap {
           sleep 0.5
         done
         tmux has-session -t \(name) 2>/dev/null || tmux new-session -d -s \(name) -c \(dir)
+        \(syncOutputLine)
         \(cleanupLine)exec tmux attach-session -t \(name)
         """
     }
@@ -207,6 +217,7 @@ enum TmuxBootstrap {
         SOCK="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"
         if [ -S "$SOCK" ]; then
           tmux has-session -t \(name) 2>/dev/null || tmux new-session -d -s \(name) -c "$WD"
+          \(syncOutputLine)
           exec tmux attach-session -t \(name)
         fi
         \(cold)
