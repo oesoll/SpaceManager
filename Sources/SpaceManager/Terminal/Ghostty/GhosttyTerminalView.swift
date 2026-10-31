@@ -264,8 +264,14 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
     private func updateSurfaceSize() {
         guard let surface, contentSize.width > 0, contentSize.height > 0 else { return }
         let backing = convertToBacking(contentSize)
+        if backing != lastBackingSize { sizeChanges += 1; lastBackingSize = backing }
         ghostty_surface_set_size(surface, UInt32(backing.width), UInt32(backing.height))
     }
+
+    private var lastBackingSize = NSSize.zero
+    /// 표면에 다른 크기를 건넨 횟수. 크기가 바뀔 때마다 PTY가 바뀌고 에이전트가 화면을 다시 그리므로, 배치가
+    /// 움직이는 동안 이 수가 늘지 않는지 시험이 본다.
+    private(set) var sizeChanges = 0
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()

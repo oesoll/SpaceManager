@@ -109,13 +109,16 @@ struct SessionTerminalWrapper: NSViewRepresentable {
 
 /// One coordinator per window; a stale animation completion cannot release a
 /// newer transition. No timer or per-frame observation is needed.
+///
+/// 창의 모든 터미널을 붙든다. 전에는 마지막에 붙은 호스트 하나만 기억해서, 패널이 여럿이면 사이드바가 접히는
+/// 동안 나머지 터미널은 프레임마다 크기가 바뀌었다(그때마다 에이전트가 화면을 다시 그린다).
 final class TerminalLayoutTransition: ObservableObject {
-    private weak var host: TerminalHostView?
+    private let hosts = NSHashTable<TerminalHostView>.weakObjects()
     private var generation = 0
     private var isActive = false
 
     func attach(_ host: TerminalHostView) {
-        self.host = host
+        hosts.add(host)
         host.setResizeDeferred(isActive)
     }
 
@@ -123,7 +126,7 @@ final class TerminalLayoutTransition: ObservableObject {
     func begin() -> Int {
         generation += 1
         isActive = true
-        host?.setResizeDeferred(true)
+        hosts.allObjects.forEach { $0.setResizeDeferred(true) }
         return generation
     }
 
@@ -134,8 +137,9 @@ final class TerminalLayoutTransition: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, transition == self.generation else { return }
             self.isActive = false
-            self.host?.window?.contentView?.layoutSubtreeIfNeeded()
-            self.host?.setResizeDeferred(false)
+            let hosts = self.hosts.allObjects
+            hosts.first?.window?.contentView?.layoutSubtreeIfNeeded()
+            hosts.forEach { $0.setResizeDeferred(false) }
         }
     }
 }
@@ -168,7 +172,26 @@ final class TerminalHostView: NSView {
     func setResizeDeferred(_ deferred: Bool) {
         guard resizeDeferred != deferred else { return }
         resizeDeferred = deferred
-        updateViewport()
+        if deferred { settling = false } else { releaseWhenStill(previous: nil, checks: 0) }
+    }
+
+    /// 놓은 뒤에도 크기가 한 프레임 동안 그대로일 때 비로소 터미널에 준다. 스프링은 눈에 띄게 멈춘 뒤에도
+    /// 1px 아래로 몇 프레임 더 움직이는데, 그때마다 크기를 주면 PTY 크기(픽셀 포함)가 바뀌어 에이전트가
+    /// 다시 그렸다(10/31 측정: 놓은 뒤 크기 9번). 곡선에 기대지 않고 멈춘 것을 보고 준다.
+    private var settling = false
+
+    private func releaseWhenStill(previous: NSRect?, checks: Int) {
+        guard !resizeDeferred else { return }
+        settling = true
+        if bounds == previous || checks >= 40 {
+            settling = false
+            updateViewport()
+            return
+        }
+        let now = bounds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60) { [weak self] in
+            self?.releaseWhenStill(previous: now, checks: checks + 1)
+        }
     }
 
     @discardableResult
@@ -216,7 +239,9 @@ final class TerminalHostView: NSView {
         terminal.autoresizingMask = []
         // A tab selected midway through a panel animation uses the held viewport
         // too. Hidden sessions never receive intermediate sizes.
-        terminal.frame = NSRect(origin: .zero, size: resizeDeferred ? (previous?.frame.size ?? bounds.size) : bounds.size)
+        // 배치가 움직이는 중에 새로 붙는 터미널은 중간 크기를 받지 않는다 — 받으면 그 크기로 자식이 떠서
+        // 에이전트가 한 번 잘못 그린다(처음 열 때 깨지던 것과 같은 일). 움직임이 끝나면 최종 크기로 시작한다.
+        terminal.frame = NSRect(origin: .zero, size: resizeDeferred ? (previous?.frame.size ?? .zero) : bounds.size)
         terminal.alphaValue = 1
         addSubview(terminal, positioned: .below, relativeTo: previous)
         terminal.layoutSubtreeIfNeeded()
@@ -239,7 +264,7 @@ final class TerminalHostView: NSView {
     }
 
     private func updateViewport() {
-        guard !resizeDeferred, !liveResize, !inLiveResize,
+        guard !resizeDeferred, !settling, !liveResize, !inLiveResize,
               bounds.width > 0, bounds.height > 0,
               let terminal, terminal.superview === self else { return }
         if terminal.frame != bounds {

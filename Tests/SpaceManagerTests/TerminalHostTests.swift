@@ -133,6 +133,9 @@ final class TerminalHostTests: XCTestCase {
         host.show(second)
         XCTAssertEqual(second.frame, initial)
         host.setResizeDeferred(false)
+        // 놓은 뒤 크기가 한 프레임 동안 그대로인 것을 보고서야 준다(스프링 꼬리의 1px 움직임마다 주지 않게).
+        XCTAssertEqual(second.frame, initial, "released before the host stopped moving")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
         XCTAssertEqual(second.frame, host.bounds)
         XCTAssertEqual(first.frame, initial)
     }
