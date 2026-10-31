@@ -244,6 +244,10 @@ final class ActivitySpinnerView: NSView {
         spin.toValue = -2 * Double.pi   // AppKit 좌표계(y 위)에서 시계 방향
         spin.duration = 0.9
         spin.repeatCount = .infinity
+        // 화면 주사율(120Hz)대로 돌면 스피너 하나가 그 창 전체의 합성을 초당 120번 깨운다. 에이전트가 여럿
+        // 일하면 사이드바·탭·패널 이름표에 스피너가 열 개 남짓 돌아 WindowServer가 계속 바빴다(10/31).
+        // 0.9초에 한 바퀴엔 30번이면 매끄럽다.
+        spin.preferredFrameRateRange = CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
         arc.add(spin, forKey: "spin")
     }
 }

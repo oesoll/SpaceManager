@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// herdr의 탭 막대(client/shell/tabs.rs)를 sm의 말로 옮겼다: 한 줄의 칩, 이름 양옆 여백, 칩 사이 한 칸,
 /// 끝에 `+`, 끌어서 순서 바꾸기, 넘치면 옆으로 민다. herdr는 활성 탭을 강조색으로 꽉 채우지만, sm은 분홍을
 /// 포커스 테두리와 상태 표시에 쓰고 있어 같은 분홍을 넓게 깔면 둘이 다툰다. 그래서 활성 탭은 옅은 분홍 면과
-/// 진한 글자로만 가른다. 탭을 바꾸면 그 면이 페이드로 옮겨 간다. herdr처럼 확대 중인 탭은 이름 뒤에 Z를 붙이고,
+/// 진한 글자로만 가른다. 탭을 바꾸면 그 면이 페이드로 옮겨 간다(렌더 서버에서, `FadingFill`). herdr처럼 확대 중인 탭은 이름 뒤에 Z를 붙이고,
 /// sm은 사이드바에서 탭을 뺐으므로 그 안에서 가장 급한 상태를 칩 왼쪽에 작게 단다.
 struct WorkspaceTabStrip: View {
     struct Item: Identifiable, Equatable {
@@ -89,11 +89,14 @@ private struct TabChip: View {
         .padding(.horizontal, 10)
         .frame(height: WorkspaceTabStrip.height - 2)
         .background {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(item.isActive ? Color(Chrome.accent).opacity(0.16)
-                                    : Color(isHovering ? Chrome.hover : .clear))
+            // 활성 면은 렌더 서버에서 페이드한다 — 탭을 바꾸는 순간은 메인 스레드가 새 배치를 그리느라
+            // 바빠서, SwiftUI 페이드는 몇 장면으로 끊겼다(SEOL 10/31). 호버 면은 페이드 없이 바로 바뀐다.
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color(isHovering && !item.isActive ? Chrome.hover : .clear))
+                FadingFill(isOn: item.isActive, color: Chrome.accent.withAlphaComponent(0.16))
+            }
         }
-        .animation(.easeOut(duration: 0.15), value: item.isActive)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture(count: 2) { rename() }
