@@ -94,7 +94,9 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     }
 
     /// 이 탭의 명령으로 새 표면을 만든다(= 새 프로세스).
-    private func makeTerminal() -> GhosttyTerminalView {
+    /// `sizeHint`: 재연결할 때 끊긴 표면의 크기. 없으면(처음) 창에 들어가 크기를 안 뒤에 띄운다.
+    /// Quick은 클릭 순간 Claude를 띄워야 해서 기다리지 않는다.
+    private func makeTerminal(sizeHint: NSSize? = nil) -> GhosttyTerminalView {
         cancelReconnectTimer()
         if kind == .quick {
             workingDirectory = QuickSessionPolicy.ensureWorkingDirectory()
@@ -105,14 +107,15 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
             arguments: launchArguments(startDirectory: startDir),
             environment: launchEnvironment(),
             workingDirectory: startDir)
-        let view = GhosttyTerminalView(launch: launch, palette: palette)
+        let hint = sizeHint.flatMap { $0.width > 0 && $0.height > 0 ? $0 : nil }
+        let view = GhosttyTerminalView(launch: launch, palette: palette, startWhenSized: kind != .quick, initialSize: hint)
         view.translatesAutoresizingMaskIntoConstraints = false
         let launchedAt = Date()
         view.onExit = { [weak self, weak view] code in
             guard let self, let view, self.started else { return }
             self.surfaceExited(view, code: code, connectedFor: Date().timeIntervalSince(launchedAt))
         }
-        if view.surface == nil {
+        if view.failedToStart {
             startError = "터미널을 시작하지 못했습니다 (libghostty 표면 생성 실패)"
             isRunning = false
         } else {
@@ -247,7 +250,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         guard started, terminalView?.isProcessRunning != true, pendingView == nil else { return }
         cancelReconnectTimer()
         startError = nil
-        let view = makeTerminal()
+        let view = makeTerminal(sizeHint: terminalView?.frame.size)
         guard isReconnecting else {
             replaceTerminal(with: view)
             return

@@ -40,16 +40,43 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
         self.frame = frame
     }
 
-    init(launch: Launch?, palette: TerminalPalette) {
+    /// `startWhenSized`: 창에 들어가 실제 크기를 안 뒤에 표면(= 자식 프로세스)을 띄운다. `initialSize`를 주면
+    /// 그 크기로 바로 띄운다(재연결: 화면 밖에서 붙어 보는 새 표면이 끊긴 표면과 같은 크기로).
+    ///
+    /// 왜: libghostty의 내장 런타임은 표면을 늘 800×600픽셀로 시작하고, 그 순간 자식이 뜬다. 에이전트에
+    /// 붙는 `sm-session attach`는 그 작은 화면(약 51칸)을 보고 에이전트를 줄였다가, 곧 들어온 실제 크기로
+    /// 다시 늘린다. 그 사이 에이전트가 좁은 폭으로 한 번 그린 화면이 "처음 열 때 잠깐 깨짐"이었다(SEOL 10/31).
+    init(launch: Launch?, palette: TerminalPalette, startWhenSized: Bool = false, initialSize: NSSize? = nil) {
         self.launch = launch ?? Launch(command: nil, workingDirectory: NSHomeDirectory())
-        super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        guard let launch, let app = GhosttyRuntime.shared.app else { return }
+        self.palette = palette
+        super.init(frame: NSRect(origin: .zero, size: initialSize ?? NSSize(width: 800, height: 600)))
+        guard let launch else { return }
+        if startWhenSized && initialSize == nil {
+            pendingLaunch = launch
+            updateTrackingAreas()
+            return
+        }
+        createSurface(launch, size: initialSize)
+        updateTrackingAreas()
+    }
+
+    private let palette: TerminalPalette
+    /// 아직 띄우지 않은 명령(실제 크기를 기다리는 중).
+    private var pendingLaunch: Launch?
+    /// 표면이 생기기 전에 들어온 입력(시험·CLI가 붙여 넣는 글자, 리턴). 생기면 그대로 보낸다.
+    private var pendingInput: [() -> Void] = []
+    /// libghostty가 표면을 만들지 못했다.
+    private(set) var failedToStart = false
+
+    private func createSurface(_ launch: Launch, size: NSSize?) {
+        guard let app = GhosttyRuntime.shared.app else { failedToStart = true; return }
+        let scale = Double(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
 
         var config = ghostty_surface_config_new()
         config.platform_tag = GHOSTTY_PLATFORM_MACOS
         config.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(self).toOpaque()))
         config.userdata = Unmanaged.passUnretained(self).toOpaque()
-        config.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2)
+        config.scale_factor = scale
         config.font_size = 0
         // 끝나도 표면을 닫지 않는다 — 끊기기 전 마지막 화면을 남겨 둔 채 세션이 재연결을 정한다.
         config.wait_after_command = true
@@ -75,13 +102,42 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
                 return ghostty_surface_new(app, &config)
             }
         }
-        if let surface, let palette = GhosttyRuntime.shared.config(for: palette) {
+        guard let surface else { failedToStart = true; return }
+        if let palette = GhosttyRuntime.shared.config(for: palette) {
             ghostty_surface_update_config(surface, palette)
         }
         // 표면은 포커스된 채로 태어난다. 알려 주지 않으면 포커스 없는 패널마다 깜박이는 커서를 그린다(SEOL 10/31).
-        if let surface { ghostty_surface_set_focus(surface, false) }
-        updateTrackingAreas()
+        ghostty_surface_set_focus(surface, false)
+        // 자식은 입출력 스레드에서 막 뜨는 중이다. 셸이 시작되고 attach가 화면 크기를 읽기 전에 실제 크기를 준다.
+        if let size, size.width > 0, size.height > 0 {
+            contentSize = size
+            ghostty_surface_set_content_scale(surface, scale, scale)
+            ghostty_surface_set_size(surface, UInt32(size.width * scale), UInt32(size.height * scale))
+        }
+        if window != nil {
+            updateOcclusion()
+            syncFocus()
+        }
+        let queued = pendingInput
+        pendingInput = []
+        queued.forEach { $0() }
     }
+
+    /// 창 안에서 크기가 정해졌으면 기다리던 표면을 띄운다. SwiftUI는 한 번의 배치에서 크기를 여러 번
+    /// 줄 수 있어, 다음 차례에 그때의 크기로 띄운다.
+    private func startIfSized() {
+        guard pendingLaunch != nil, window != nil, frame.width > 0, frame.height > 0, !startScheduled else { return }
+        startScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let launch = self.pendingLaunch else { return }
+            self.startScheduled = false
+            guard self.window != nil, self.frame.width > 0, self.frame.height > 0 else { return }
+            self.pendingLaunch = nil
+            self.createSurface(launch, size: self.frame.size)
+        }
+    }
+
+    private var startScheduled = false
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
@@ -114,10 +170,12 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
         return pid > 0 ? pid_t(pid) : nil
     }
 
-    var isProcessRunning: Bool { surface != nil && !exited }
+    /// 띄울 차례를 기다리는 표면도 도는 것으로 친다 — 세션이 그 사이에 다시 띄우지 않게.
+    var isProcessRunning: Bool { (surface != nil || pendingLaunch != nil) && !exited }
 
     /// 글자를 붙여 넣는다(테스트와 CLI용). 붙여넣기라 셸이 바로 실행하지 않는다 — 실행은 `pressReturn`.
     func sendText(_ text: String) {
+        if surface == nil, pendingLaunch != nil { pendingInput.append { [weak self] in self?.sendText(text) }; return }
         guard let surface, !exited else { return }
         let length = text.utf8CString.count - 1
         text.withCString { ghostty_surface_text(surface, $0, UInt(length)) }
@@ -125,6 +183,7 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
 
     /// 리턴 키를 누른다.
     func pressReturn() {
+        if surface == nil, pendingLaunch != nil { pendingInput.append { [weak self] in self?.pressReturn() }; return }
         guard let surface, !exited else { return }
         var key = ghostty_input_key_s()
         key.keycode = 36 // kVK_Return
@@ -199,6 +258,7 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
         super.setFrameSize(newSize)
         contentSize = newSize
         updateSurfaceSize()
+        startIfSized()
     }
 
     private func updateSurfaceSize() {
@@ -232,7 +292,7 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
                 })
             }
         }
-        guard surface != nil else { return }
+        guard surface != nil else { startIfSized(); return }
         updateOcclusion()
         if window != nil { viewDidChangeBackingProperties() }
         syncFocus()
