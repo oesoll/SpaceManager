@@ -186,7 +186,7 @@ enum ControlCommands {
             let data = try JSONEncoder.pretty.encode(WorkspaceStorage.shared.windowStates)
             return try JSONSerialization.jsonObject(with: data)
 
-        case "quick.new", "quick.resume", "window.new", "window.capture", "perf.frames", "session.reveal":
+        case "quick.new", "quick.resume", "window.new", "window.capture", "perf.frames", "perf.keys", "session.reveal":
             throw fail("internal: async command reached sync dispatcher")
         default:
             throw fail("unknown command: \(r.command)")
@@ -269,6 +269,18 @@ enum ControlCommands {
                                             "pane": place.pane, "window": entry.state.windowStateId.uuidString]))
                         }
                     }
+                }
+            }
+            return true
+
+        case "perf.keys":
+            let entry = try window(r)
+            guard let nsWindow = entry.window else { throw fail("window has no NSWindow yet") }
+            guard let name = r.string("session") else { throw fail("usage: sm perf keys NAME [-n COUNT]") }
+            KeyProbe.run(state: entry.state, window: nsWindow, session: name, count: min(max(r.int("count") ?? 40, 1), 200)) {
+                switch $0 {
+                case .success(let report): completion(.ok(report))
+                case .failure(let error): completion(.error(error.message))
                 }
             }
             return true

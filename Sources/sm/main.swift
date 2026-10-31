@@ -42,6 +42,8 @@ sm — SpaceManager를 터미널에서 조작한다
   sm capture [-w win] <file.png> [--rect x,y,w,h]   창을 찍는다(앱이 자기 창을 찍어 화면 기록 권한이 필요 없다)
   sm capture [-w win] --rect x,y,w,h --burst N [--every MS] [dir]
                                       같은 자리를 N번 연달아 찍어 시각(ms)과 평균 색을 낸다(페이드 확인용)
+  sm perf keys NAME [-n COUNT]        보이는 탭에서 NAME 패널에 키를 넣고 화면에 그려지기까지(키 → 화면). NAME은
+                                      sm-bench-로 시작해야 한다(실제 에이전트에 글자가 들어가지 않게)
   sm perf [-w win] [seconds] [--do tab:N|tab:next|focus:next|ws:NAME] [--rect x,y,w,h]
                                       그 동안 메인 스레드가 놓친 프레임. --do는 0.3초 뒤 사람이 누르는 길로
                                       한 번 움직이고, --rect는 같은 시간축에서 그 자리가 언제 바뀌고 멈췄는지 낸다
@@ -176,6 +178,10 @@ do {
         command = "session.reveal"
         guard let target = sub else { throw CLIError(message: "usage: sm reveal NAME[@HOST]") }
         args["target"] = target
+    case ("perf", "keys"):
+        command = "perf.keys"
+        args["session"] = try need(1, "sm perf keys NAME [-n COUNT]  (NAME must start with sm-bench-)")[0]
+        if let n = flags["limit"] { args["count"] = Int(n) ?? 40 }
     case ("perf", _):
         command = "perf.frames"; if let s = sub { args["seconds"] = s }
         if let action = flags["do"] { args["do"] = action }

@@ -208,3 +208,82 @@ final class FrameProbe: NSObject {
         return out
     }
 }
+
+/// `sm perf keys NAME`: 실제 패널에 키를 넣고 그 글자가 화면에 그려질 때까지 잰다(키 → 화면). sm 앱이 터미널
+/// 엔진만 쓸 때보다 늦어지는 곳(SwiftUI 층, 창 합성, 붙들기·ssh 경로)이 있는지 보려는 것이다.
+///
+/// 이름이 `sm-bench-`로 시작하는 세션을 보여 주는 패널에만 친다. 실제 에이전트의 입력란에 글자가 들어가면 안 된다.
+/// 그 세션 안에서는 글자를 되돌려 보여 주는 프로그램(예: `stty -icanon; exec cat`)이 돌고 있어야 한다.
+@MainActor
+enum KeyProbe {
+    static let prefix = "sm-bench-"
+
+    static func run(state: AppState, window: NSWindow, session name: String, count: Int,
+                    completion: @escaping (Result<[String: Any], ControlCommands.CommandError>) -> Void) {
+        guard name.hasPrefix(prefix) else {
+            completion(.failure(.init(message: "only sessions named \(prefix)* (a real agent must not receive test keys)"))); return
+        }
+        guard let workspace = state.selectedWorkspace, let layout = state.selectedLayout,
+              let tab = state.displayedTab(of: layout),
+              let pane = tab.root.paneIDs.first(where: { layout.panes[$0]?.session == name }) else {
+            completion(.failure(.init(message: "\(name) is not in the tab this window shows"))); return
+        }
+        guard let terminal = state.layoutTerminals.session(for: pane, in: layout, workspace: workspace).terminalView else {
+            completion(.failure(.init(message: "\(name) has no terminal yet"))); return
+        }
+        terminal.focusTerminal()
+        // 패널 윗부분 세 줄(글자가 되돌아오는 자리). 창 왼쪽 위 기준으로 바꾼다.
+        let inWindow = terminal.convert(terminal.bounds, to: nil)
+        let height = window.contentView?.bounds.height ?? window.frame.height
+        let rect = WindowProbe.screenRect(CGRect(x: inWindow.minX, y: height - inWindow.maxY,
+                                                 width: inWindow.width, height: min(inWindow.height, 54)), in: window)
+        let number = window.windowNumber
+        let keys: [(String, UInt16)] = [("a", 0), ("s", 1), ("d", 2), ("f", 3), ("g", 5), ("h", 4), ("j", 38), ("k", 40)]
+        var samples: [Double] = []
+        var missed = 0
+        let poll = DispatchQueue(label: "sm.keyprobe", qos: .userInteractive)
+
+        func step(_ index: Int) {
+            guard index < count else {
+                let sorted = samples.sorted()
+                func at(_ p: Double) -> Double { sorted.isEmpty ? 0 : (sorted[min(sorted.count - 1, Int(Double(sorted.count) * p))] * 10).rounded() / 10 }
+                completion(.success(["n": samples.count, "missed": missed, "median": at(0.5), "p90": at(0.9),
+                                     "min": at(0), "max": at(1), "samples": samples.map { ($0 * 10).rounded() / 10 }]))
+                return
+            }
+            poll.async {
+                let before = WindowProbe.image(windowNumber: number, screenRect: rect).flatMap(Self.bytes)
+                DispatchQueue.main.async {
+                    let (char, code) = keys[index % keys.count]
+                    func key(_ type: NSEvent.EventType) -> NSEvent? {
+                        NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                         windowNumber: number, context: nil, characters: char, charactersIgnoringModifiers: char,
+                                         isARepeat: false, keyCode: code)
+                    }
+                    let start = CACurrentMediaTime()
+                    if let down = key(.keyDown) { window.sendEvent(down) }
+                    if let up = key(.keyUp) { window.sendEvent(up) }
+                    // 화면은 메인 스레드를 막지 않고 뒤에서 기다린다 — 막으면 재려는 그리기를 늦춘다.
+                    poll.async {
+                        var seen: Double?
+                        while CACurrentMediaTime() - start < 0.5 {
+                            if let now = WindowProbe.image(windowNumber: number, screenRect: rect).flatMap(Self.bytes), now != before {
+                                seen = CACurrentMediaTime(); break
+                            }
+                            usleep(1000)
+                        }
+                        DispatchQueue.main.async {
+                            if let seen { samples.append((seen - start) * 1000) } else { missed += 1 }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { step(index + 1) }
+                        }
+                    }
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { step(0) }
+    }
+
+    nonisolated private static func bytes(_ image: CGImage) -> Data? {
+        image.dataProvider?.data as Data?
+    }
+}
