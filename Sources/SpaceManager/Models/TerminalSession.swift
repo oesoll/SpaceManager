@@ -32,6 +32,10 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     private let initialName: String
 
     private(set) var terminalView: TerminalWebView?
+    /// 작업 창의 라이트/다크를 따른다. 터미널이 아직 없으면 만들 때 이 값을 쓴다.
+    var palette: TerminalPalette {
+        didSet { terminalView?.setPalette(palette) }
+    }
     private var pty: PTYProcess?
     private var started = false
     private var quickSessionId: String?
@@ -52,6 +56,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
          quickConfiguration: QuickSessionConfiguration = .default) {
         self.id = id
         self.kind = kind
+        self.palette = kind == .quick ? .quickLight : .workspaceDark
         self.name = name
         self.initialName = name
         self.workingDirectory = workingDirectory
@@ -64,7 +69,6 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
 
     func getOrCreateTerminal() -> TerminalWebView {
         if let existing = terminalView { return existing }
-        let palette: TerminalPalette = kind == .quick ? .quickLight : .workspaceDark
         let view = TerminalWebView(frame: .zero, palette: palette)
         view.translatesAutoresizingMaskIntoConstraints = false
         view.onUserInput = { [weak self] data in
@@ -103,6 +107,9 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         var env = ProcessInfo.processInfo.environment
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
+        // 색을 그리는 터미널이다. 앱을 에이전트 셸에서 다시 띄우면 그 셸의 NO_COLOR=1이
+        // 새 탭(과 새로 뜨는 tmux 서버)으로 새어 Codex가 색을 통째로 끈다.
+        env.removeValue(forKey: "NO_COLOR")
         if kind == .quick {
             env = QuickSessionPolicy.applyingEnvironment(
                 env,

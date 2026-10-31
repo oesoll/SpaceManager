@@ -58,15 +58,14 @@ enum WindowFrameRestoration {
 struct WindowBindingView: NSViewRepresentable {
     let appState: AppState
     let scanner: RecentActivityScanner
-    let hover: IslandHoverState
     let title: String
 
     func makeNSView(context: Context) -> WindowBindingNSView {
-        WindowBindingNSView(appState: appState, scanner: scanner, hover: hover, title: title)
+        WindowBindingNSView(appState: appState, scanner: scanner, title: title)
     }
 
     func updateNSView(_ view: WindowBindingNSView, context: Context) {
-        view.update(appState: appState, scanner: scanner, hover: hover, title: title)
+        view.update(appState: appState, scanner: scanner, title: title)
     }
 
     static func dismantleNSView(_ view: WindowBindingNSView, coordinator: ()) {
@@ -78,25 +77,22 @@ final class WindowBindingNSView: NSView {
     private weak var appState: AppState?
     private weak var boundWindow: NSWindow?
     private var scanner: RecentActivityScanner
-    private var hover: IslandHoverState
     private var title: String
     private var windowObservers: [NSObjectProtocol] = []
     private var pendingPresentationSave: DispatchWorkItem?
 
-    init(appState: AppState, scanner: RecentActivityScanner, hover: IslandHoverState, title: String) {
+    init(appState: AppState, scanner: RecentActivityScanner, title: String) {
         self.appState = appState
         self.scanner = scanner
-        self.hover = hover
         self.title = title
         super.init(frame: .zero)
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    func update(appState: AppState, scanner: RecentActivityScanner, hover: IslandHoverState, title: String) {
+    func update(appState: AppState, scanner: RecentActivityScanner, title: String) {
         self.appState = appState
         self.scanner = scanner
-        self.hover = hover
         self.title = title
         bindIfPossible()
     }

@@ -88,7 +88,7 @@ final class TerminalWebView: NSView {
     private(set) var lastCols: UInt16 = 80
     private(set) var lastRows: UInt16 = 24
 
-    private let palette: TerminalPalette
+    private var palette: TerminalPalette
     private let webView: WKWebView
     private var isReady = false
     private var pendingOutput = Data()
@@ -111,7 +111,7 @@ final class TerminalWebView: NSView {
         // Keep WebKit inside a composited container so its resize redraws do not
         // paint over SwiftUI layers floating above the terminal.
         wantsLayer = true
-        layer?.backgroundColor = (palette == .quickLight ? NSColor.white : NSColor(white: 30.0 / 255, alpha: 1)).cgColor
+        paintLayerBackground()
 
         config.userContentController.add(BridgeProxy(owner: self), name: "bridge")
         webView.navigationDelegate = navigationProxy
@@ -236,11 +236,24 @@ final class TerminalWebView: NSView {
         webView.evaluateJavaScript("window.smFit && window.smFit()", completionHandler: nil)
     }
 
-    /// 워크스페이스는 기존 다크를 유지하고, tmux를 쓰지 않는 Quick만 전체
-    /// 라이트 ANSI 팔레트를 쓴다. 색상 선택은 TerminalPalette 한 경로에 모은다.
+    /// 창의 라이트/다크가 바뀌면 같은 터미널에 팔레트만 갈아 끼운다. 세션은 그대로다.
+    func setPalette(_ newPalette: TerminalPalette) {
+        guard newPalette != palette else { return }
+        palette = newPalette
+        paintLayerBackground()
+        if isReady { applyTheme() }
+    }
+
+    private func paintLayerBackground() {
+        layer?.backgroundColor = (palette.colors["background"] == "#ffffff"
+            ? NSColor.white : NSColor(white: 30.0 / 255, alpha: 1)).cgColor
+    }
+
+    /// 작업 창은 창의 외형, tmux를 쓰지 않는 Quick은 라이트 역할 팔레트를 쓴다.
+    /// 색상 선택은 TerminalPalette 한 경로에 모은다.
     private func applyTheme() {
         guard let theme = palette.json else { return }
-        webView.evaluateJavaScript("window.smSetTheme(\(theme))", completionHandler: nil)
+        webView.evaluateJavaScript("window.smSetTheme(\(theme), \(palette.minimumContrastRatio))", completionHandler: nil)
     }
 
     // MARK: - 클립보드 (네이티브 단일 경로, 스펙 §4)

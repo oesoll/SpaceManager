@@ -26,7 +26,7 @@ Windows, sidebars, state, and navigation use SwiftUI and AppKit. Only the termin
 
 This keeps macOS window behavior native while retaining terminal behavior required by tmux and CLI TUIs.
 
-Workspace windows extend both panels to the top of a dark canvas, with the activity island floating above them at the center of the whole window. The sidebar button switches between the full sidebar and a compact folder rail while keeping workspace icons at the same vertical positions.
+Workspace windows place a sidebar card and a terminal card on a flat canvas, separated by hairlines rather than shadows. Each sidebar row shows a folder icon (its color can be set per workspace from the context menu), the name, the activity dot, and where it runs (`mac`, `arch`, …). The sidebar button switches between the full sidebar and a compact rail of colored folder icons at the same vertical positions. Light and dark apply to the whole window, terminal palette included.
 
 The sidebar and terminal card move together with a fixed gap. The terminal viewport stays at its existing size during the transition and receives the final size once the animation ends, avoiding repeated tmux redraws. Tab switches retain the outgoing surface until the selected terminal has rendered, then fade between them.
 
@@ -51,6 +51,10 @@ An optional local proxy exposes Codex models through the Anthropic Messages inte
 ### Glass is limited to the sidebar
 
 The sidebar uses a behind-window `NSVisualEffectView`. The main canvas is opaque. Earlier builds applied behind-window blur and glass effects to more surfaces; measurement with several large windows showed high WindowServer CPU use, so the effect was reduced to the sidebar.
+
+### Terminal colours are assigned by role
+
+The 16 ANSI slots are painted by role rather than by name, the same palette as Fine. Claude's `*-ansi` themes emit 97 for emphasis, 37 for secondary text, 94 for inline code and links and 91 for its accent, so 37 is a grey and the light palette keeps 97 near-black. A 4.5:1 minimum contrast keeps truecolor output (Codex syntax highlighting) legible on either background. New tabs drop an inherited `NO_COLOR`. `TerminalColorCaptureTests` and `WindowCaptureTests` (`SM_CAPTURE=1`, isolated home and `TMUX_TMPDIR`) render real captures for review.
 
 ## How to use
 
@@ -142,7 +146,7 @@ for another configured SSH alias. The same choices are in the context menu under
 Each workspace keeps its own destination, so local Xcode projects and remote agents
 can share the same app window. Changing the destination does not copy project files.
 A missing Mac checkout blocks switching to local and leaves the current tabs connected.
-Activity dots and island navigation follow both the project path and its host.
+Activity dots follow both the project path and its host.
 
 The **+ / New Workspace** sheet also offers **이 Mac / 아치 / 다른 호스트** before
 creating the first tab. Remote folders can be entered as `~/myworld/project`
@@ -204,7 +208,7 @@ native save timer. Both home and XDG tmux configuration entry points are covered
 
 ### Remote activity
 
-Activity dots and the island read local transcripts, so a remote workspace
+Activity dots read local transcripts, so a remote workspace
 would otherwise stay dark. `scripts/remote-activity-mirror.sh <host>` closes
 that gap without copying transcripts: every five seconds it runs
 `scripts/remote-activity-summary.py` on the host over ssh (sent on stdin, so

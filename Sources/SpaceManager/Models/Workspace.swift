@@ -33,6 +33,8 @@ struct Workspace: Codable, Identifiable, Equatable {
     /// ssh 호스트 별칭 (예: "arch"). 설정되면 이 워크스페이스의 tmux 서버는 그 호스트에 있고,
     /// 탭은 `ssh -t <host>`로 붙는다. nil이면 로컬 tmux.
     var remoteHost: String?
+    /// 사이드바 폴더 아이콘 색(`FolderTint.rawValue`). nil이면 기본 회색.
+    var folderColor: String?
 
     var isRemote: Bool {
         guard let host = remoteHost?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
@@ -87,7 +89,7 @@ struct Workspace: Codable, Identifiable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, rootPath, customName, additionalProjects, createdAt, updatedAt, tmuxSessionName, remoteHost
+        case id, rootPath, customName, additionalProjects, createdAt, updatedAt, tmuxSessionName, remoteHost, folderColor
     }
 
     init(from decoder: Decoder) throws {
@@ -100,6 +102,7 @@ struct Workspace: Codable, Identifiable, Equatable {
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         tmuxSessionName = try container.decodeIfPresent(String.self, forKey: .tmuxSessionName)
         remoteHost = try container.decodeIfPresent(String.self, forKey: .remoteHost)
+        folderColor = try container.decodeIfPresent(String.self, forKey: .folderColor)
     }
 
     mutating func addProject(_ project: Project) {

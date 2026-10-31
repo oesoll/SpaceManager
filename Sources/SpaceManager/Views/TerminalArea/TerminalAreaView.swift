@@ -21,6 +21,10 @@ struct TerminalAreaView: View {
                 .background(Color.orange.opacity(0.1))
             }
             SingleTerminalView()
+                // 작업 창은 카드 라운딩이 없어 글자가 세로선에 붙는다. 셀 한 칸 남짓 들인다.
+                .padding(appState.windowKind == .workspace
+                         ? EdgeInsets(top: 6, leading: 12, bottom: 4, trailing: 4)
+                         : EdgeInsets())
         }
         // terminal.html의 WKWebView는 drawsBackground=false다. 카드 자체가 팔레트와
         // 동일한 불투명색을 그려 behind-window 유리가 글자 뒤로 새지 않게 한다.
@@ -40,10 +44,11 @@ struct SingleTerminalView: View {
         } else if appState.windowKind == .quick {
             QuickHomeView()
         } else {
-            VStack {
-                Text("No terminal")
-                    .foregroundColor(.secondary)
-                Button("New Terminal") {
+            VStack(spacing: 10) {
+                Text("열린 터미널이 없습니다")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color(Chrome.textTertiary))
+                Button("새 터미널") {
                     appState.addDefaultTab()
                 }
             }
@@ -72,27 +77,24 @@ struct QuickHomeView: View {
 
     var body: some View {
         VStack(spacing: 28) {
-            VStack(spacing: 8) {
-                HStack(spacing: 10) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundColor(Color(red: 0.92, green: 0.45, blue: 0.35))
-                    Text("새 대화 시작")
-                        .font(.system(size: 30, weight: .semibold))
-                        .tracking(-0.5)
-                        .foregroundColor(.primary)
-                }
+            // 장식 아이콘 없이 글자 위계만으로 선다 — Fine 홈과 같은 서체·자간.
+            VStack(spacing: 10) {
+                Text("새 대화 시작")
+                    .font(HomeFont.greeting(31))
+                    .tracking(-1.0)
+                    .foregroundColor(.primary)
                 Text("무엇을 도와드릴까요?")
-                    .font(.system(size: 15, weight: .regular))
+                    .font(HomeFont.note)
+                    .tracking(0.1)
                     .foregroundColor(.secondary.opacity(0.85))
             }
 
             VStack(alignment: .leading, spacing: 14) {
                 ZStack(alignment: .topLeading) {
                     if prompt.isEmpty {
-                        Text("메시지를 입력하세요...")
-                            .font(.system(size: 16, weight: .regular))
-                            .foregroundColor(Color.secondary.opacity(0.55))
+                        Text("무엇이든 물어보세요")
+                            .font(HomeFont.prompt)
+                            .foregroundColor(Color.secondary.opacity(0.6))
                             .padding(.top, 2)
                             .padding(.leading, 4)
                             .allowsHitTesting(false)
@@ -100,7 +102,8 @@ struct QuickHomeView: View {
 
                     TextField("", text: $prompt, axis: .vertical)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 16, weight: .regular))
+                        .font(HomeFont.prompt)
+                        .lineSpacing(4)
                         .lineLimit(3...10)
                         .focused($isPromptFocused)
                         .onSubmit(submit)
@@ -115,35 +118,40 @@ struct QuickHomeView: View {
 
                     Spacer()
 
+                    // Fine의 보내기 버튼: 둥근 사각형, 쓸 수 있을 때만 짙은 솔잎색.
                     Button(action: submit) {
                         Image(systemName: "arrow.up")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(trimmedPrompt.isEmpty ? Color.secondary.opacity(0.55) : Color.white)
-                            .frame(width: 32, height: 32)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(trimmedPrompt.isEmpty ? Color.secondary : Color.white)
+                            .frame(width: 30, height: 30)
                             .background(
-                                Circle().fill(trimmedPrompt.isEmpty ? Color.primary.opacity(0.12) : Color.black)
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(trimmedPrompt.isEmpty
+                                          ? Color.black.opacity(0.05)
+                                          : Color(red: 0.22, green: 0.27, blue: 0.23))
                             )
-                            .animation(.spring(response: 0.25, dampingFraction: 0.82), value: trimmedPrompt.isEmpty)
+                            .animation(.spring(response: 0.25, dampingFraction: 1), value: trimmedPrompt.isEmpty)
                     }
                     .buttonStyle(.plain)
                     .disabled(trimmedPrompt.isEmpty)
                 }
 
                 Text(sessionModeDescription)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.72))
+                    .font(HomeFont.caption)
+                    .foregroundColor(.secondary.opacity(0.75))
                     .lineLimit(1)
             }
             .padding(20)
+            // 테두리는 머리카락 한 올, 그림자는 바탕색 쪽으로 기운 아주 옅은 한 겹 —
+            // 회색 테두리와 짙은 이중 그림자는 카드를 무겁게 들어 올렸다.
             .background(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(Color(nsColor: .textBackgroundColor))
-                    .shadow(color: Color.black.opacity(0.04), radius: 3, y: 1)
-                    .shadow(color: Color.black.opacity(0.08), radius: 24, y: 8)
+                    .shadow(color: Color(red: 0.27, green: 0.30, blue: 0.26).opacity(0.08), radius: 24, y: 10)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color.black.opacity(0.10), lineWidth: 1)
+                    .strokeBorder(Color.black.opacity(0.07), lineWidth: 1)
             )
         }
         .frame(maxWidth: 640)
@@ -219,7 +227,9 @@ struct QuickHomeView: View {
         } label: {
             pickerLabel(selectedModel.displayName, icon: "sparkle")
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
         .help(modelCatalog.routerAvailable ? "대화 모델 선택" : "라우터 오프라인 — Claude 모델만 사용 가능")
     }
@@ -240,7 +250,9 @@ struct QuickHomeView: View {
         } label: {
             pickerLabel(selectedEffort.displayName, icon: "dial.medium")
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
         .help("응답 생성 effort")
     }
@@ -284,10 +296,10 @@ struct QuickHomeView: View {
             Image(systemName: "arrow.triangle.branch")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(proxyEnabled ? .primary : .secondary.opacity(0.72))
-                .frame(width: 27, height: 25)
+                .frame(width: 30, height: 30)
                 .background(
-                    Capsule(style: .continuous)
-                        .fill(Color.primary.opacity(proxyEnabled ? 0.10 : 0.045))
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.black.opacity(proxyEnabled ? 0.10 : 0.05))
                 )
         }
         .buttonStyle(.plain)
@@ -295,24 +307,27 @@ struct QuickHomeView: View {
         .help(isCodex ? "Codex 모델은 프록시 세션이 필수입니다" : "세션 내 Claude↔Codex 전환 허용")
     }
 
+    /// Fine의 컨트롤 알약 — 모델·effort·프록시가 같은 높이·라운딩·바탕을 쓴다.
+    /// `.borderlessButton` 메뉴는 라벨 배경을 지우므로 메뉴는 `.button` + plain으로 그린다.
     private func pickerLabel(_ title: String, icon: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
                 .font(.system(size: 10, weight: .semibold))
             Text(title)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
-            Image(systemName: "chevron.up.chevron.down")
+            Image(systemName: "chevron.down")
                 .font(.system(size: 7, weight: .bold))
                 .foregroundColor(.secondary.opacity(0.65))
         }
-        .foregroundColor(.secondary)
+        .foregroundColor(.primary.opacity(0.75))
         .padding(.horizontal, 9)
-        .frame(height: 25)
+        .frame(height: 30)
         .background(
-            Capsule(style: .continuous)
-                .fill(Color.primary.opacity(0.045))
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.black.opacity(0.05))
         )
+        .contentShape(Rectangle())
     }
 
     private var sessionModeDescription: String {

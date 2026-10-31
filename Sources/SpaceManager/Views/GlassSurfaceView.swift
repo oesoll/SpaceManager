@@ -8,7 +8,8 @@ enum GlassSurfaceRole: Equatable {
     case quickSidebar
 }
 
-/// 캔버스는 불투명 차콜, 사이드바만 behind-window blur를 사용한다.
+/// 작업 창의 면은 `Chrome`의 단색 토큰(바탕·사이드바·작업면)이다. 여기 캔버스 색은
+/// Quick 창의 카드 뒤에만 쓰인다. Quick 사이드바만 behind-window blur를 쓴다.
 enum GlassSurfacePolicy {
     static func canvasColor(for windowKind: WindowKind, isDark: Bool) -> NSColor {
         if windowKind == .quick {
@@ -29,45 +30,34 @@ enum GlassSurfacePolicy {
     static func canvasColor(for role: GlassSurfaceRole) -> NSColor {
         switch role {
         case .canvasDark:
-            return NSColor(srgbRed: 0.032, green: 0.039, blue: 0.050, alpha: 1)
+            return NSColor(srgbRed: 0.043, green: 0.043, blue: 0.047, alpha: 1)
         case .canvasLight:
-            return NSColor(srgbRed: 0.065, green: 0.076, blue: 0.092, alpha: 1)
+            return NSColor(srgbRed: 0.075, green: 0.075, blue: 0.082, alpha: 1)
         case .workspaceSidebar, .quickSidebar:
             preconditionFailure("Sidebar roles do not have a canvas color")
         }
     }
 
     /// WKWebView는 drawsBackground=false이므로 카드가 직접 팔레트 배경을 막는다.
+    /// 작업 창은 창의 라이트/다크를 따르는 작업면 색이다.
     static func terminalCardColor(for windowKind: WindowKind) -> NSColor {
         switch windowKind {
         case .workspace:
-            return NSColor(srgbRed: 0x1e / 255, green: 0x1e / 255, blue: 0x1e / 255, alpha: 1)
+            return Chrome.pane
         case .quick:
             return NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
         }
     }
 }
 
-/// A static, opaque light falloff gives the frame depth without another live
-/// blur surface, offscreen drawing group or continuously animated backdrop.
+/// Quick 창 카드 뒤의 바탕. 작업 창은 `Chrome.canvas` 단색을 직접 깐다.
 struct WorkspaceCanvasSurface: View {
     let windowKind: WindowKind
     let isDark: Bool
 
     var body: some View {
-        Group {
-            if windowKind == .workspace {
-                let base = GlassSurfacePolicy.canvasColor(for: windowKind, isDark: isDark)
-                LinearGradient(stops: [
-                    .init(color: Color(nsColor: base.blended(withFraction: 0.045, of: .white) ?? base), location: 0),
-                    .init(color: Color(nsColor: base), location: 0.48),
-                    .init(color: Color(nsColor: base.blended(withFraction: 0.3, of: .black) ?? base), location: 1),
-                ], startPoint: .topLeading, endPoint: .bottomTrailing)
-            } else {
-                Color(nsColor: GlassSurfacePolicy.canvasColor(for: windowKind, isDark: isDark))
-            }
-        }
-        .allowsHitTesting(false)
+        Color(nsColor: GlassSurfacePolicy.canvasColor(for: windowKind, isDark: isDark))
+            .allowsHitTesting(false)
     }
 }
 

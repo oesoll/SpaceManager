@@ -213,6 +213,16 @@ class AppState: ObservableObject {
         persistWindowState()
     }
 
+    func setFolderColor(_ workspace: Workspace, to color: String?) {
+        guard let index = workspaceIndex(id: workspace.id) else { return }
+        workspaces[index].folderColor = color
+        workspaces[index].updatedAt = Date()
+        if selectedWorkspace?.id == workspace.id {
+            selectedWorkspace = workspaces[index]
+        }
+        persistWindowState()
+    }
+
     func moveWorkspace(from sourceIndex: Int, to destinationIndex: Int) {
         guard sourceIndex != destinationIndex,
               sourceIndex >= 0, sourceIndex < workspaces.count,

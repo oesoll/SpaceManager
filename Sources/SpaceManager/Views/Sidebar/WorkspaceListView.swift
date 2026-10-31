@@ -7,8 +7,6 @@ struct WorkspaceListView: View {
     var isCompact = false
     @ObservedObject private var activity = RecentActivityScanner.shared
     @State private var draggingWorkspace: Workspace?
-    @Namespace private var animation
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// 이 워크스페이스(루트 및 하위 경로)에서의 마지막 Claude 대화 시각
     private func lastConversation(for workspace: Workspace) -> Date? {
@@ -28,9 +26,9 @@ struct WorkspaceListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             if appState.workspaces.isEmpty {
-                Text("No workspaces")
+                Text("워크스페이스가 없습니다")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.9))
+                    .foregroundColor(Color(Chrome.textTertiary))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 4)
                     .opacity(isCompact ? 0 : 1)
@@ -43,9 +41,7 @@ struct WorkspaceListView: View {
                         isSelected: appState.selectedWorkspace?.id == workspace.id,
                         lastConversation: lastConversation(for: workspace),
                         isGenerating: isGenerating(workspace),
-                        animation: animation,
-                        onAddShellTab: { appState.selectWorkspace(workspace); appState.addShellTab() },
-                        onAddTmuxTab: { appState.selectWorkspace(workspace); appState.addTmuxTab() },
+                        tint: FolderTint.color(for: workspace.folderColor),
                         onChangeHost: { changeHost(workspace, to: $0) }
                     )
                     .onTapGesture {
@@ -64,9 +60,7 @@ struct WorkspaceListView: View {
                             workspaces: { appState.workspaces },
                             dragging: $draggingWorkspace
                         ) { source, destination in
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                appState.moveWorkspace(from: source, to: destination)
-                            }
+                            appState.moveWorkspace(from: source, to: destination)
                         }
                     )
                     .contextMenu {
@@ -104,6 +98,26 @@ struct WorkspaceListView: View {
                         Menu("실행 위치") {
                             WorkspaceHostChoices(workspace: workspace) { changeHost(workspace, to: $0) }
                         }
+                        Menu("폴더 색") {
+                            Button { appState.setFolderColor(workspace, to: nil) } label: {
+                                if workspace.folderColor == nil { Label("기본", systemImage: "checkmark") } else { Text("기본") }
+                            }
+                            Divider()
+                            ForEach(FolderTint.allCases) { tint in
+                                Button { appState.setFolderColor(workspace, to: tint.rawValue) } label: {
+                                    if workspace.folderColor == tint.rawValue {
+                                        Label(tint.title, systemImage: "checkmark")
+                                    } else {
+                                        Text(tint.title)
+                                    }
+                                }
+                            }
+                        }
+                        Divider()
+                        Button("새 셸 탭") { appState.selectWorkspace(workspace); appState.addShellTab() }
+                        if TmuxBootstrap.isTmuxAvailable {
+                            Button("새 tmux 탭") { appState.selectWorkspace(workspace); appState.addTmuxTab() }
+                        }
                         Divider()
                         Button("Delete", role: .destructive) {
                             appState.deleteWorkspace(workspace)
@@ -112,12 +126,11 @@ struct WorkspaceListView: View {
 
                     // 선택된 워크스페이스의 탭 폴더링 — 탭이 2개 이상일 때만 하위 목록 표시
                     if appState.selectedWorkspace?.id == workspace.id && appState.sessions.count > 1 {
-                        VStack(spacing: 2) {
+                        VStack(spacing: 0) {
                             ForEach(appState.sessions) { session in
                                 WorkspaceTabRow(
                                     session: session,
                                     isSelected: appState.selectedSession?.id == session.id,
-                                    animation: animation,
                                     onSelect: {
                                         appState.selectSession(session)
                                     },
@@ -127,19 +140,16 @@ struct WorkspaceListView: View {
                         }
                         // Retain these rows' height so every folder keeps its Y
                         // position while names and subordinate tabs fade away.
-                        .frame(width: (isCompact ? Sidebar.compactWidth : Sidebar.expandedWidth) - 16)
+                        .frame(width: (isCompact ? Sidebar.compactWidth : Sidebar.workspaceWidth) - 12)
                         .opacity(isCompact ? 0 : 1)
                         .clipped()
                         .allowsHitTesting(!isCompact)
                         .accessibilityHidden(isCompact)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 6)
             }
         }
-        .animation(reduceMotion ? nil : Sidebar.selectionAnimation, value: appState.selectedWorkspace?.id)
-        .animation(reduceMotion ? nil : Sidebar.selectionAnimation, value: appState.selectedSession?.id)
     }
 
     private func changeHost(_ workspace: Workspace, to host: String) {
@@ -213,7 +223,6 @@ final class ActivitySpinnerView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         arc.fillColor = nil
-        arc.strokeColor = NSColor(Color.warmPink.opacity(0.75)).cgColor
         arc.lineWidth = 1.2
         arc.lineCap = .round
         arc.strokeEnd = 0.72
@@ -223,6 +232,14 @@ final class ActivitySpinnerView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// 동적 색은 CALayer에 넘길 때 고정되므로 외형이 바뀔 때마다 다시 푼다.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            arc.strokeColor = Chrome.accent.withAlphaComponent(0.85).cgColor
+        }
+    }
 
     override func layout() {
         super.layout()
@@ -239,6 +256,7 @@ final class ActivitySpinnerView: NSView {
         super.viewDidMoveToWindow()
         arc.removeAnimation(forKey: "spin")
         guard window != nil else { return }
+        viewDidChangeEffectiveAppearance()
         let spin = CABasicAnimation(keyPath: "transform.rotation.z")
         spin.fromValue = 0
         spin.toValue = -2 * Double.pi   // AppKit 좌표계(y 위)에서 시계 방향
@@ -250,7 +268,7 @@ final class ActivitySpinnerView: NSView {
 
 /// 워크스페이스 행의 활동 점.
 ///
-/// 점의 진하기 = 마지막 Claude 대화의 최근성. 방금 대화했으면 선명한 warmPink,
+/// 점의 진하기 = 마지막 Claude 대화의 최근성. 방금 대화했으면 선명한 강조색,
 /// 시간이 지날수록 흐려지다 24시간이 지나면 사라진다 — 사이드바만 훑어도
 /// "요즘 만지는 워크스페이스"가 도드라진다. 에이전트가 지금 출력을 만드는 중이면
 /// 점 둘레에 스피너가 돈다. 자리는 항상 확보해 상태가 오가도 행이 밀리지 않는다.
@@ -275,7 +293,7 @@ struct WorkspaceActivityDot: View {
         ZStack {
             if let opacity {
                 Circle()
-                    .fill(Color.warmPink)
+                    .fill(Color(Chrome.accent))
                     .frame(width: 6, height: 6)
                     .opacity(opacity)
 
@@ -300,11 +318,11 @@ struct WorkspaceActivityDot: View {
     }
 }
 
-/// 워크스페이스 하위 탭 행 (폴더링 목록의 항목)
+/// 워크스페이스 하위 탭 행 (폴더링 목록의 항목). 이름은 워크스페이스 이름과 같은 세로줄에서
+/// 시작한다. 정상(실행 중)은 아무 표시도 없고, 재연결·종료처럼 손이 갈 상태만 점으로 남긴다.
 struct WorkspaceTabRow: View {
     @ObservedObject var session: TerminalSession
     let isSelected: Bool
-    let animation: Namespace.ID
     let onSelect: () -> Void
     let onClose: () -> Void
     @State private var isHovering = false
@@ -313,29 +331,34 @@ struct WorkspaceTabRow: View {
     /// 닫히는 척만 하는 ×를 보여주느니 처음부터 닫기 대상에서 제외한다.
     private var isClosable: Bool { session.kind != .tmuxMain }
 
+    private var statusColor: Color? {
+        if session.isReconnecting { return .reconnectAmber }
+        if !session.isRunning { return Color(Chrome.textTertiary) }
+        return nil
+    }
+
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(session.isReconnecting
-                      ? Color.reconnectAmber.opacity(isSelected ? 1 : 0.6)
-                      : session.isRunning
-                      ? Color.green.opacity(isSelected ? 1 : 0.5)
-                      : Color.gray.opacity(isSelected ? 1 : 0.5))
-                .frame(width: 5, height: 5)
-
             Text(session.name)
-                .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                .foregroundColor(isSelected ? .warmPinkMuted : .primary.opacity(0.85))
+                .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
+                .foregroundColor(Color(isSelected ? Chrome.textPrimary : Chrome.textSecondary))
                 .lineLimit(1)
 
             Spacer(minLength: 0)
+
+            if let statusColor {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 5, height: 5)
+                    .help(session.isReconnecting ? "재연결 중" : "종료됨")
+            }
 
             // 자리를 항상 확보하고 투명도로만 나타낸다 — 호버 때 요소가 끼어들면
             // 텍스트가 밀리며 목록이 출렁인다
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.secondary.opacity(0.9))
+                    .foregroundColor(Color(Chrome.textTertiary))
                     .frame(width: 14, height: 14)
                     .contentShape(Rectangle())
             }
@@ -344,17 +367,14 @@ struct WorkspaceTabRow: View {
             .opacity(isClosable && isHovering ? 1 : 0)
             .allowsHitTesting(isClosable && isHovering)
         }
-        .padding(.vertical, 4)
-        .padding(.leading, 32)
-        .padding(.trailing, 8)
+        .frame(height: Sidebar.tabRowHeight)
+        // 워크스페이스 이름과 같은 세로줄에서 시작한다(행 여백 + 아이콘 칸 + 간격).
+        .padding(.leading, Sidebar.listInset + Sidebar.iconFrame + 6)
+        .padding(.trailing, 4)
         .background {
-            if isSelected {
-                RoundedRectangle(cornerRadius: Sidebar.rowCornerRadius)
-                    .fill(Color.white.opacity(0.10))
-                    .matchedGeometryEffect(id: "tab_selection", in: animation)
-            } else if isHovering {
-                RoundedRectangle(cornerRadius: Sidebar.rowCornerRadius)
-                    .fill(Color.white.opacity(0.04))
+            if isHovering && !isSelected {
+                RoundedRectangle(cornerRadius: Sidebar.listCornerRadius, style: .continuous)
+                    .fill(Color(Chrome.hover))
             }
         }
         .contentShape(Rectangle())
@@ -393,109 +413,88 @@ private struct WorkspaceDropDelegate: DropDelegate {
 }
 
 /// Single workspace row
+///
+/// 폴더 아이콘, 이름, 활동 점, 실행 위치(mac·arch…). 실행 위치는 글자로 늘 보이고 누르면
+/// 바꿀 수 있다 — 맥·아치·NUC가 섞인 목록에서 "어디서 도는가"는 매번 필요한 정보다.
+/// 경로는 툴팁, 새 탭은 컨텍스트 메뉴에 있다. 아이콘 색은 워크스페이스마다 고를 수 있어,
+/// 접힌 레일에서는 색 있는 폴더만으로 고른다.
 struct WorkspaceRow: View {
     let workspace: Workspace
     var isCompact = false
     let isSelected: Bool
     var lastConversation: Date?
     var isGenerating: Bool = false
-    let animation: Namespace.ID
-    var onAddShellTab: (() -> Void)?
-    var onAddTmuxTab: (() -> Void)?
+    /// `workspace.folderColor`를 따로 받는다 — Workspace의 ==는 id만 비교해서
+    /// 값만 바뀐 행은 SwiftUI가 다시 그리지 않을 수 있다.
+    var tint: NSColor?
     var onChangeHost: ((String) -> Void)?
     @State private var isHovering = false
 
+    private var hostLabel: String {
+        workspace.isRemote ? (workspace.remoteHost ?? "") : "mac"
+    }
+
+    private var iconColor: Color {
+        if let tint { return Color(tint) }
+        return Color(isSelected ? Chrome.textPrimary : Chrome.textSecondary)
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
-            Image(systemName: isSelected ? "folder.fill" : "folder")
-                .font(.system(size: Sidebar.iconSize, weight: .medium))
-                .foregroundColor(isSelected ? .warmPinkMuted : .secondary.opacity(0.9))
-                .frame(width: Sidebar.iconFrame)
-
-            HStack(spacing: 8) {
-                // 경로 부제는 선택된 행에만 — 호버로 행 높이가 변하면 목록 전체가 출렁인다.
-                // 다른 행의 경로는 툴팁(.help)으로 확인.
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(workspace.name)
-                            .font(.system(size: 13, weight: isSelected ? .bold : .medium))
-                            .foregroundColor(isSelected ? .warmPinkMuted : .primary.opacity(0.9))
-                            .lineLimit(1)
+        Group {
+            if isCompact {
+                folderIcon
+                    .overlay(alignment: .topTrailing) {
+                        WorkspaceActivityDot(lastConversation: lastConversation, isGenerating: isGenerating)
+                            .offset(x: 7, y: -6)
                     }
-
-                    if isSelected {
-                        Text(workspace.rootPath.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.secondary.opacity(0.9))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                    .frame(maxWidth: .infinity)
+            } else {
+                HStack(spacing: 6) {
+                    folderIcon
+                    Text(workspace.name)
+                        .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                        .foregroundColor(Color(isSelected ? Chrome.textPrimary : Chrome.textSecondary))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 2)
+                    WorkspaceActivityDot(lastConversation: lastConversation, isGenerating: isGenerating)
+                    Menu {
+                        WorkspaceHostChoices(workspace: workspace) { onChangeHost?($0) }
+                    } label: {
+                        Text(hostLabel)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(Color(Chrome.textTertiary))
                     }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("실행 위치 변경")
                 }
-
-                Spacer(minLength: 0)
-
-                WorkspaceActivityDot(lastConversation: lastConversation, isGenerating: isGenerating)
-
-                Menu {
-                    WorkspaceHostChoices(workspace: workspace) { onChangeHost?($0) }
-                } label: {
-                    Image(systemName: workspace.isRemote ? "server.rack" : "laptopcomputer")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.secondary.opacity(0.8))
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 16)
-                .accessibilityLabel("실행 위치: \(workspace.isRemote ? workspace.remoteHost ?? "" : "이 Mac")")
-                .help("실행 위치: \(workspace.isRemote ? workspace.remoteHost ?? "" : "이 Mac")")
-                .opacity(isSelected || isHovering ? 1 : 0)
-                .allowsHitTesting(isSelected || isHovering)
-                .accessibilityHidden(!(isSelected || isHovering))
-
-                // 자리를 항상 확보하고 투명도로만 나타낸다 (호버 출렁임 방지)
-                Menu {
-                    Button("셸 탭") { onAddShellTab?() }
-                    if TmuxBootstrap.isTmuxAvailable {
-                        Button("tmux 탭") { onAddTmuxTab?() }
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary.opacity(0.9))
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 20)
-                .help("New Tab")
-                .opacity(isSelected || isHovering ? 1 : 0)
-                .allowsHitTesting(isSelected || isHovering)
+                .padding(.leading, Sidebar.listInset)
+                .padding(.trailing, Sidebar.listInset)
             }
-            .padding(.leading, isCompact ? 0 : 8)
-            .opacity(isCompact ? 0 : 1)
-            .frame(width: isCompact ? 0 : nil)
-            .clipped()
-            .allowsHitTesting(!isCompact)
-            .accessibilityHidden(isCompact)
         }
-        .frame(height: isSelected ? 30 : 16)
+        .frame(height: Sidebar.rowHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, Sidebar.rowVerticalPadding)
-        .padding(.horizontal, Sidebar.rowHorizontalPadding)
         .background {
-            if isSelected {
-                RoundedRectangle(cornerRadius: Sidebar.rowCornerRadius)
-                    .fill(Color.white.opacity(0.10))
-                    .matchedGeometryEffect(id: "workspace_selection", in: animation)
-            } else if isHovering {
-                RoundedRectangle(cornerRadius: Sidebar.rowCornerRadius)
-                    .fill(Color.white.opacity(0.04))
+            if isSelected || isHovering {
+                RoundedRectangle(cornerRadius: Sidebar.listCornerRadius, style: .continuous)
+                    .fill(Color(isSelected ? Chrome.selection : Chrome.hover))
             }
         }
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .help("\(workspace.name)\n\(workspace.rootPath)")
-        .accessibilityElement(children: isCompact ? .ignore : .contain)
+        .help("\(workspace.name)\n\(workspace.isRemote ? (workspace.remoteHost ?? "") + ":" : "")\(workspace.rootPath)")
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(workspace.name)
         .accessibilityValue(isSelected ? "Selected" : "")
+    }
+
+    private var folderIcon: some View {
+        Image(systemName: isSelected ? "folder.fill" : "folder")
+            .font(.system(size: Sidebar.iconSize, weight: .medium))
+            .foregroundColor(iconColor)
+            .frame(width: Sidebar.iconFrame)
     }
 }

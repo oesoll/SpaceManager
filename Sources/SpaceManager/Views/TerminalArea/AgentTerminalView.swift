@@ -46,7 +46,6 @@ private struct ReconnectingBadge: View {
             .foregroundColor(Color(red: 0x1e / 255, green: 0x1e / 255, blue: 0x1e / 255))
             .background(Color.reconnectAmber)
             .padding(.top, 2)
-            // 카드의 둥근 모서리에 끝 글자가 잘리지 않게 곡선 안쪽으로 들인다.
             .padding(.trailing, 16)
             .onTapGesture(perform: retryNow)
             .help(detail.map { "\($0)\n클릭하면 바로 다시 연결합니다" } ?? "클릭하면 바로 다시 연결합니다")
@@ -63,9 +62,18 @@ struct SessionTerminalWrapper: NSViewRepresentable {
     let session: TerminalSession
     @EnvironmentObject private var terminalLayout: TerminalLayoutTransition
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// 작업 창 터미널은 창의 라이트/다크를 따른다. 보이는 세션만 갱신하고,
+    /// 다른 탭은 다시 보일 때 이 경로를 지나며 맞춰진다.
+    private func syncPalette() {
+        guard session.kind != .quick else { return }
+        session.palette = colorScheme == .dark ? .workspaceDark : .workspaceLight
+    }
 
     func makeNSView(context: Context) -> TerminalHostView {
         let host = TerminalHostView()
+        syncPalette()
         terminalLayout.attach(host)
         host.animatesTransitions = !reduceMotion
         host.show(session.getOrCreateTerminal())
@@ -73,6 +81,7 @@ struct SessionTerminalWrapper: NSViewRepresentable {
     }
 
     func updateNSView(_ host: TerminalHostView, context: Context) {
+        syncPalette()
         terminalLayout.attach(host)
         host.animatesTransitions = !reduceMotion
         let changed = host.show(session.getOrCreateTerminal())

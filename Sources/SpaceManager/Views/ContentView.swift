@@ -7,10 +7,9 @@ struct ContentView: View {
     private let windowKind: WindowKind
     @Binding private var sceneWindowStateId: UUID?
     @StateObject private var appState: AppState
-    // The island and sidebar observe their own data. Activity updates must not
+    // The sidebar observes its own activity data. Activity updates must not
     // invalidate the entire window and refocus/re-layout its terminal.
     private let activityScanner = RecentActivityScanner.shared
-    @StateObject private var islandHover = IslandHoverState()
     @StateObject private var terminalLayout = TerminalLayoutTransition()
     @SceneStorage("workspaceSidebarCompact") private var isSidebarCompact = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -68,47 +67,11 @@ struct ContentView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            WorkspaceCanvasSurface(windowKind: windowKind, isDark: isDarkNow)
-                .ignoresSafeArea()
-            
-            HStack(alignment: .top, spacing: windowKind == .workspace ? 10 : 12) {
-                Group {
-                    if windowKind == .quick {
-                        QuickSidebarView()
-                    } else {
-                        SidebarView(isCompact: sidebarBinding)
-                    }
-                }
-                    .frame(width: windowKind == .workspace && isSidebarCompact ? Sidebar.compactWidth : Sidebar.expandedWidth)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                
-                TerminalAreaView()
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay {
-                        if windowKind == .workspace {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.white.opacity(0.07), lineWidth: 1)
-                        }
-                    }
-                    .background {
-                        // Shadow the card shape, not WebKit's changing pixels.
-                        // This avoids offscreen compositing of the terminal on
-                        // every frame of the shared panel animation.
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color(nsColor: GlassSurfacePolicy.terminalCardColor(for: windowKind)))
-                            .shadow(color: Color.black.opacity(isDarkNow ? 0.3 : 0.1), radius: 8, x: 0, y: 4)
-                    }
-            }
-            .padding(windowKind == .workspace ? 8 : 12)
-
-            // A separate top layer stays above the native terminal during layout
-            // changes, centered on the whole window without reserving height.
+        Group {
             if windowKind == .workspace {
-                FloatingActivityIsland(scanner: activityScanner, hover: islandHover, appState: appState)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .zIndex(1)
+                workspaceLayout
+            } else {
+                quickLayout
             }
         }
         // Extend both panels into the titlebar; only the narrow outer frame remains.
@@ -117,7 +80,6 @@ struct ContentView: View {
             WindowBindingView(
                 appState: appState,
                 scanner: activityScanner,
-                hover: islandHover,
                 title: windowTitle
             )
                 .frame(width: 0, height: 0)
@@ -160,6 +122,56 @@ struct ContentView: View {
             if windowKind == .workspace, !appState.shouldCloseOnAppearance {
                 RecentActivityScanner.shared.stop(owner: appState.windowStateId)
             }
+        }
+    }
+}
+
+extension ContentView {
+    /// 작업 창: 단색 바탕 위에 사이드바 카드와 터미널 카드가 같은 간격으로 떠 있다.
+    /// 카드는 그림자 없이 머리카락 선으로 맺는다 — 짙은 바탕에서 그림자는 보이지 않고
+    /// 라이트에서는 카드를 무겁게 들어 올렸다.
+    private var workspaceLayout: some View {
+        HStack(spacing: Self.cardGap) {
+            SidebarView(isCompact: sidebarBinding)
+                .frame(width: isSidebarCompact ? Sidebar.compactWidth : Sidebar.workspaceWidth)
+                .clipShape(RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous))
+                .overlay(cardRim)
+
+            TerminalAreaView()
+                .clipShape(RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous))
+                .overlay(cardRim)
+        }
+        .padding(Self.cardGap)
+        .background(Color(Chrome.canvas))
+    }
+
+    private static let cardGap: CGFloat = 8
+    private static let cardRadius: CGFloat = 12
+
+    private var cardRim: some View {
+        RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
+            .strokeBorder(Color(Chrome.hairline), lineWidth: 1)
+    }
+
+    private var quickLayout: some View {
+        ZStack(alignment: .top) {
+            WorkspaceCanvasSurface(windowKind: windowKind, isDark: isDarkNow)
+                .ignoresSafeArea()
+
+            HStack(alignment: .top, spacing: 12) {
+                QuickSidebarView()
+                    .frame(width: Sidebar.expandedWidth)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                TerminalAreaView()
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color(nsColor: GlassSurfacePolicy.terminalCardColor(for: windowKind)))
+                            .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+                    }
+            }
+            .padding(12)
         }
     }
 }

@@ -1,9 +1,7 @@
 import SwiftUI
 
-/// Left sidebar containing workspaces and projects.
-/// 라이트 모드에서도 딥 다크를 유지한다 — 아일랜드의 "완전 다크"를 패널로 연장한
-/// 디자인 결정. 컬러스킴을 다크로 고정하면 .primary/.secondary/선택 배경이 전부
-/// 다크 기준으로 풀리므로 개별 색을 손볼 필요가 없다.
+/// 워크스페이스를 넘기는 사이드바. 파일 목록은 뺐다 — 이 패널이 하는 일은 전환뿐이다.
+/// 창의 라이트/다크를 따른다. 작업면보다 한 단 가라앉은 면이라 어느 쪽에서든 터미널이 주인공이다.
 struct SidebarView: View {
     @EnvironmentObject var appState: AppState
     @Binding var isCompact: Bool
@@ -21,10 +19,10 @@ struct SidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 0) {
-                Text("WORKSPACES")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
+                Text("워크스페이스")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.2)
+                    .foregroundStyle(Color(Chrome.textSecondary))
                     .lineLimit(1)
                     .opacity(isCompact ? 0 : 1)
                     .frame(width: isCompact ? 0 : nil, alignment: .leading)
@@ -37,7 +35,7 @@ struct SidebarView: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: Sidebar.iconSize, weight: .medium))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color(Chrome.textSecondary))
                             .frame(width: 22, height: 24)
                             .contentShape(Rectangle())
                     }
@@ -55,30 +53,17 @@ struct SidebarView: View {
                     .padding(.leading, isCompact ? 0 : 4)
             }
             .frame(height: 24)
-            .padding(.horizontal, isCompact ? 17 : 16)
+            .padding(.horizontal, isCompact ? (Sidebar.compactWidth - 22) / 2 : 14)
             .padding(.top, 14)
             .padding(.bottom, 8)
 
-            // Workspaces section — 고정 높이 + 자체 스크롤 (워크스페이스가 많아도 영역 불변)
             ScrollView {
                 WorkspaceListView(isCompact: isCompact)
             }
-            .frame(height: isCompact ? nil : 320)
-            .frame(maxHeight: isCompact ? .infinity : nil)
-
-            if !isCompact {
-                Divider()
-                    .padding(.vertical, 8)
-
-                // Projects section (for selected workspace)
-                ProjectListView()
-
-                Spacer()
-            }
+            .frame(maxHeight: .infinity)
         }
         .frame(maxHeight: .infinity)
-        .background(BehindWindowGlassSurface(role: .workspaceSidebar))
-        .environment(\.colorScheme, .dark)
+        .background(Color(Chrome.sidebar))
     }
 
     private var themeToggle: some View {
@@ -87,7 +72,7 @@ struct SidebarView: View {
         } label: {
             Image(systemName: isDarkNow ? "sun.max" : "moon")
                 .font(.system(size: Sidebar.iconSize, weight: .medium))
-                .foregroundStyle(isHoveringTheme ? Color.primary : Color.secondary)
+                .foregroundStyle(Color(isHoveringTheme ? Chrome.textPrimary : Chrome.textSecondary))
                 .frame(width: 22, height: 24)
                 .contentShape(Rectangle())
         }
@@ -103,7 +88,7 @@ struct SidebarView: View {
         } label: {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color(Chrome.textSecondary))
                 .frame(width: 22, height: 24)
                 .contentShape(Rectangle())
         }
