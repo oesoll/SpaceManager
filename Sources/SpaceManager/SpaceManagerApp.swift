@@ -48,6 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct SpaceManagerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    init() {
+        // 창·패널이 하나라도 뜨기 전에: 에이전트 셸에서 띄웠으면 그 세션의 정체를 지운다(InheritedAgentSession).
+        let cleared = InheritedAgentSession.clear()
+        if !cleared.isEmpty { NSLog("cleared inherited agent session variables: %@", cleared.joined(separator: " ")) }
+    }
+
     var body: some Scene {
         WindowGroup(id: "main", for: UUID.self) { $windowStateId in
             ContentView(windowStateId: $windowStateId)
