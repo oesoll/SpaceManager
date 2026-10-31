@@ -186,7 +186,7 @@ enum ControlCommands {
             let data = try JSONEncoder.pretty.encode(WorkspaceStorage.shared.windowStates)
             return try JSONSerialization.jsonObject(with: data)
 
-        case "quick.new", "quick.resume", "window.new", "window.capture", "perf.frames":
+        case "quick.new", "quick.resume", "window.new", "window.capture", "perf.frames", "session.reveal":
             throw fail("internal: async command reached sync dispatcher")
         default:
             throw fail("unknown command: \(r.command)")
@@ -232,6 +232,45 @@ enum ControlCommands {
             try WindowProbe.writePNG(image, to: path)
             completion(.ok(["path": path, "width": image.width, "height": image.height,
                             "scale": nsWindow.backingScaleFactor]))
+            return true
+
+        case "session.reveal":
+            guard let target = r.string("target"), !target.isEmpty else { throw fail("usage: sm reveal NAME[@HOST]") }
+            // 어디 있는지는 세션 층이 안다(원격도, 이름의 대소문자도 맞춰 준다).
+            SessionLayer.run(["where", target, "--json"]) { result in
+                switch result {
+                case .failure(let failure):
+                    completion(.error(failure.message))
+                case .success(let data):
+                    guard let found = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let name = found["name"] as? String, let host = found["host"] as? String else {
+                        completion(.error("sm-session where: unexpected answer")); return
+                    }
+                    guard let layoutWorkspace = found["workspace"] as? String else {
+                        completion(.error("\(name)@\(host) is not in any workspace")); return
+                    }
+                    let key = LayoutDirectory.key(workspace: layoutWorkspace, host: host)
+                    // 그 워크스페이스를 이미 보여 주는 창 → 앞에 있는 창 → 그 워크스페이스를 가진 아무 창.
+                    let windows = liveWindows().filter { $0.state.windowKind == .workspace }
+                    let holding = windows.compactMap { entry in
+                        entry.state.workspaces.first { entry.state.layoutKey(for: $0) == key }.map { (entry, $0) }
+                    }
+                    let chosen = holding.first { $0.0.state.selectedWorkspace?.id == $0.1.id }
+                        ?? holding.first { $0.0.window?.isKeyWindow == true } ?? holding.first
+                    guard let (entry, workspace) = chosen else {
+                        completion(.error("no sm window has workspace \(key) — add it with sm ws add")); return
+                    }
+                    focus(entry)
+                    entry.state.reveal(session: name, in: workspace, layoutKey: key, pane: found["pane"] as? String) { outcome in
+                        switch outcome {
+                        case .failure(let failure): completion(.error(failure.message))
+                        case .success(let place):
+                            completion(.ok(["name": name, "host": host, "workspace": layoutWorkspace, "tab": place.tab,
+                                            "pane": place.pane, "window": entry.state.windowStateId.uuidString]))
+                        }
+                    }
+                }
+            }
             return true
 
         case "perf.frames":

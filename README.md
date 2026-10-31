@@ -272,6 +272,9 @@ sm quick new [--model M] [--effort E] [--proxy] [prompt…]
 sm quick resume <session-id>
 sm quick home
 
+sm reveal NAME[@HOST]               그 에이전트가 보이는 패널을 앞으로(워크스페이스·탭·패널, 키 입력까지).
+                                    어느 패널에도 없으면 새 탭에 붙인다. Fine 노치 알림을 누르면 Fine이 부른다
+
 sm capture [-w win] <file.png> [--rect x,y,w,h]   창을 찍는다(앱이 자기 창을 찍어 화면 기록 권한이 필요 없다)
 sm capture [-w win] --rect x,y,w,h --burst N [--every MS] [dir]
                                     같은 자리를 N번 연달아 찍어 시각(ms)과 평균 색을 낸다

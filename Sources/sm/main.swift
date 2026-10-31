@@ -37,6 +37,8 @@ sm — SpaceManager를 터미널에서 조작한다
   sm spawn|attach|resume|ls|tail|stop|restore …
                                       에이전트 세션 — ~/.smux/bin/sm-session에 그대로 넘긴다
 
+  sm reveal NAME[@HOST]               그 에이전트가 보이는 패널을 앞으로(워크스페이스·탭·패널, 키 입력까지).
+                                      어느 패널에도 없으면 새 탭에 붙인다. Fine 노치 알림을 누르면 Fine이 부른다
   sm capture [-w win] <file.png> [--rect x,y,w,h]   창을 찍는다(앱이 자기 창을 찍어 화면 기록 권한이 필요 없다)
   sm capture [-w win] --rect x,y,w,h --burst N [--every MS] [dir]
                                       같은 자리를 N번 연달아 찍어 시각(ms)과 평균 색을 낸다(페이드 확인용)
@@ -170,6 +172,10 @@ do {
         if let burst = flags["burst"] { args["burst"] = Int(burst) ?? 1 }
         if let every = flags["every"] { args["every"] = Int(every) ?? 8 }
         if args["path"] == nil && args["burst"] == nil { throw CLIError(message: "usage: sm capture <file.png> | sm capture --rect x,y,w,h --burst N [dir]") }
+    case ("reveal", _):
+        command = "session.reveal"
+        guard let target = sub else { throw CLIError(message: "usage: sm reveal NAME[@HOST]") }
+        args["target"] = target
     case ("perf", _):
         command = "perf.frames"; if let s = sub { args["seconds"] = s }
         if let action = flags["do"] { args["do"] = action }
