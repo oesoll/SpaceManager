@@ -19,6 +19,22 @@ private struct TabSurfaceContent: View {
     @ObservedObject var interaction: LayoutInteraction
     /// 이 창에서 지금 워크스페이스의, 한 번이라도 보인 탭.
     @State private var visited: (key: String, tabs: Set<String>) = ("", [])
+    /// 바로 전에 보이던 탭·워크스페이스의 자리. 새로 들어오는 화면이 어느 쪽에서 오는지 정한다.
+    @State private var lastTab: (key: String, index: Int) = ("", 0)
+    @State private var lastWorkspaceIndex = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// 탭·워크스페이스 전환(SEOL 10/31 "스페이스, 탭 전환 애니메이션"). 탭 막대는 가로라 탭은 옆에서,
+    /// 사이드바는 세로라 워크스페이스는 위아래에서 들어온다 — 누른 것이 놓인 쪽에서 화면이 온다.
+    /// 짧게 밀리며 겹쳐 흐려진다. 튀지 않는 스프링이고, 키 입력은 누른 순간 새 화면으로 간다.
+    static let switchSpring = Animation.spring(response: 0.3, dampingFraction: 1.0)
+    static let tabSlide: CGFloat = 36
+    static let workspaceSlide: CGFloat = 28
+    /// 동작 줄이기: 움직이지 않고 겹쳐 바뀌기만 한다.
+    private var switchAnimation: Animation { reduceMotion ? .easeOut(duration: 0.15) : Self.switchSpring }
+    /// 떠나는 화면은 빨리 흐려진다. 같은 속도로 겹쳐 흐려지면 터미널 글자 두 벌이 반투명하게 겹쳐 보였다
+    /// (10/31 전환 도중 캡처). 들어오는 쪽에는 지연을 두지 않는다.
+    static let leaving = Animation.easeOut(duration: 0.1)
 
     private func remember(_ tab: String, in layoutKey: String) {
         if visited.key != layoutKey { visited = (layoutKey, [tab]) } else if !visited.tabs.contains(tab) { visited.tabs.insert(tab) }
@@ -49,6 +65,10 @@ private struct TabSurfaceContent: View {
         return group
     }
 
+    private var workspaceIndex: Int {
+        appState.workspaces.firstIndex { $0.id == appState.selectedWorkspace?.id } ?? 0
+    }
+
     var body: some View {
         Group {
             if layoutUndecided {
@@ -56,9 +76,11 @@ private struct TabSurfaceContent: View {
                     .clipShape(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous)
                         .strokeBorder(Color(Chrome.hairline), lineWidth: 1))
+                    .transition(.identity)
             } else if let layout = layoutTab?.0, interaction.pendingTab == LayoutDirectory.key(workspace: layout.workspace, host: layout.host) {
                 // 새 탭: 탭 전체가 고르는 상자 하나다.
                 PickerCardStandalone { newTabPicker(layout: layout) }
+                    .transition(.identity)
             } else if let (layout, tab, workspace) = layoutTab {
                 // 한 번 본 탭은 떼지 않고 겹쳐 둔다. 탭마다 새로 지으면 전환할 때마다 메인 스레드가 40–70ms
                 // 멈추고(프레임 2–4장), 다시 붙은 터미널이 첫 장면을 그리기 전까지 빈 카드가 비쳤다(10/31
@@ -67,24 +89,48 @@ private struct TabSurfaceContent: View {
                 // — 여러 워크스페이스의 탭을 다 들고 있으면 돌아올 때 한꺼번에 지어 오히려 느리다.
                 let layoutKey = LayoutDirectory.key(workspace: layout.workspace, host: layout.host)
                 let mounted = visited.key == layoutKey ? visited.tabs : []
+                let order = layout.tabs.map(\.id)
+                let shownIndex = order.firstIndex(of: tab.id) ?? 0
+                // 처음 보는 탭은 지금 막 생겨나므로, 전에 보던 탭과의 자리로 들어올 쪽을 정한다.
+                let entering = CGFloat(lastTab.key == layoutKey ? (shownIndex - lastTab.index).signum() : 0)
                 ZStack {
                     ForEach(layout.tabs.filter { $0.id == tab.id || mounted.contains($0.id) }) { each in
                         let shown = each.id == tab.id
+                        // 숨은 탭은 탭 막대에서 놓인 쪽(지금 탭의 오른쪽이면 오른쪽)으로 살짝 비켜 있다. 고르면 그
+                        // 자리에서 가운데로 들어오고, 떠나는 탭은 반대쪽으로 밀리며 흐려진다.
+                        let side = CGFloat(((order.firstIndex(of: each.id) ?? 0) - shownIndex).signum())
                         LayoutTabView(layout: layout, tab: each, workspace: workspace, interaction: interaction,
                                       directory: directory, picker: { pending in
                             AnyView(layoutPicker(pending, layout: layout))
                         }, isShown: shown)
+                        .offset(x: shown || reduceMotion ? 0 : side * Self.tabSlide)
                         .opacity(shown ? 1 : 0)
                         .allowsHitTesting(shown)
                         .accessibilityHidden(!shown)
                         .zIndex(shown ? 1 : 0)
+                        .animation(shown ? switchAnimation : Self.leaving, value: tab.id)
+                        .transition(reduceMotion ? .opacity : .offset(x: entering * Self.tabSlide).combined(with: .opacity))
                     }
                 }
                 .id(layoutKey)
-                .onAppear { remember(tab.id, in: layoutKey) }
-                .onChange(of: LayoutInteraction.tabKey(layout, tab.id)) { _, _ in remember(tab.id, in: layoutKey) }
+                // 워크스페이스를 바꾸면 사이드바에서 놓인 쪽(아래면 아래)에서 올라온다. 떠나는 쪽은 제자리에서 흐려진다
+                // — 떠나는 화면의 방향은 그 화면이 마지막으로 그려질 때 정해져 있어 이번 방향을 알 수 없다.
+                .transition(.asymmetric(
+                    insertion: reduceMotion ? .opacity
+                        : .offset(y: (workspaceIndex >= lastWorkspaceIndex ? 1 : -1) * Self.workspaceSlide).combined(with: .opacity),
+                    removal: .opacity.animation(Self.leaving)))
+                .onAppear {
+                    remember(tab.id, in: layoutKey)
+                    lastTab = (layoutKey, shownIndex)
+                }
+                .onChange(of: LayoutInteraction.tabKey(layout, tab.id)) { _, _ in
+                    remember(tab.id, in: layoutKey)
+                    lastTab = (layoutKey, shownIndex)
+                }
             } else if let group {
+                // 옛 tmux 탭 화면은 움직이지 않는다 — 떠나는 화면과 들어오는 화면이 같은 터미널을 두고 다툰다.
                 SplitTab(group: group, directory: directory)
+                    .transition(.identity)
             } else if appState.windowKind == .workspace {
                 // 작업 창은 카드 라운딩이 없어 글자가 세로선에 붙는다. 셀 한 칸 남짓 들인다.
                 SingleTerminalView()
@@ -94,11 +140,15 @@ private struct TabSurfaceContent: View {
                     .clipShape(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous)
                         .strokeBorder(Color(Chrome.hairline), lineWidth: 1))
+                    .transition(.identity)
             } else {
                 SingleTerminalView()
                     .background(Color(nsColor: GlassSurfacePolicy.terminalCardColor(for: appState.windowKind)))
+                    .transition(.identity)
             }
         }
+        .animation(switchAnimation, value: appState.selectedWorkspace?.id)
+        .onChange(of: appState.selectedWorkspace?.id) { _, _ in lastWorkspaceIndex = workspaceIndex }
         .onAppear {
             guard appState.windowKind == .workspace else { return }
             directory.start(owner: appState.windowStateId)

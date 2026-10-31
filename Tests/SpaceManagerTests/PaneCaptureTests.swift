@@ -287,19 +287,19 @@ final class PaneCaptureTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: out.appendingPathComponent("tabswitch.json"))
 
-        // 다시 오가는 전환 한 번을 창 전체로 연달아 찍는다 — 빈 카드가 한 장이라도 비치는지 눈으로 본다.
-        let frames = out.appendingPathComponent("tabswitch-frames")
-        try? FileManager.default.removeItem(at: frames)
-        let whole = WindowProbe.screenRect(CGRect(origin: .zero, size: window.frame.size), in: window)
-        var shots: [[String: Any]]?
-        WindowProbe.burst(windowNumber: window.windowNumber, screenRect: whole, count: 40, every: 0.012,
-                          folder: frames.path, duration: 0.6) { shots = $0 }
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        let switchedAt = Date()
-        appState.selectTab(at: 1)
-        let deadline = Date().addingTimeInterval(10)
-        while shots == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
-        print("tabswitch-frames", (shots ?? []).count, "switch at", Int(switchedAt.timeIntervalSince1970 * 1000) % 100000)
+        // 다시 오가는 전환 한 번: 도중(0.09초)과 끝난 뒤를 한 장씩 남긴다(tabswitch-mid.png, tabswitch-end.png).
+        let target = appState.selectedLayout.flatMap { layout in appState.displayedTab(of: layout).map { layout.tabs.firstIndex(of: $0) } } ?? 0
+        appState.selectTab(at: target == 0 ? 1 : 0)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.09))
+        if let mid = try? capture(window) {
+            try NSBitmapImageRep(cgImage: mid).representation(using: .png, properties: [:])?
+                .write(to: out.appendingPathComponent("tabswitch-mid.png"))
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        if let end = try? capture(window) {
+            try NSBitmapImageRep(cgImage: end).representation(using: .png, properties: [:])?
+                .write(to: out.appendingPathComponent("tabswitch-end.png"))
+        }
     }
 
     /// 고르는 상자 시안: 왼쪽은 일하는 에이전트, 오른쪽은 ⌘D로 막 생긴 자리와 그 안의 상자.
