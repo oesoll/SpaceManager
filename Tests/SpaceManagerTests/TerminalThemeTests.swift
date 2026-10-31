@@ -50,7 +50,9 @@ final class TerminalThemeTests: XCTestCase {
             for key in ["red", "green", "yellow", "blue", "magenta", "cyan", "brightBlue", "brightRed"] {
                 XCTAssertGreaterThanOrEqual(try Self.contrast(XCTUnwrap(c[key]), bg), 4.5, "\(bg) \(key)")
             }
-            XCTAssertEqual(palette.minimumContrastRatio, 4.5)
+            // 팔레트 색은 위에서 모두 4.5를 넘는다. 그래서 어두운 쪽은 엔진의 보정을 끈다 — Ghostty는 모자란
+            // 글자를 순백으로 바꿔 Claude mod의 흐린 회색을 흰색으로 만들었다(GhosttyContrastTests).
+            XCTAssertEqual(palette.minimumContrastRatio, palette == .workspaceDark ? 1 : 4.5)
         }
     }
 }

@@ -41,7 +41,13 @@ struct TerminalPalette: Equatable {
         "brightMagenta": "#cdb6ee",
         "brightCyan": "#98d0cd",
         "brightWhite": "#ececee",
-    ])
+    ],
+    // 어두운 바탕에서는 최소 대비를 끈다. Ghostty는 대비가 모자란 글자를 조금 밝히는 게 아니라 순백으로
+    // 바꿔 버려서(shaders.metal contrasted_color), Claude mod(tool-lines)가 일부러 흐리게 칠한 도구 호출 줄
+    // #767676이 본문보다 밝은 흰색이 되었다(SEOL 10/31 "너무 잘 보여서 눈이 아파", GhosttyContrastTests).
+    // 예전 xterm.js는 모자란 만큼만 밝혀서 회색으로 남았다. Claude의 색은 모두 이 팔레트 안의 읽히는 색이다.
+    // 엔진이 xterm처럼 조금씩 밝히게 되면 다시 켤 수 있다.
+    minimumContrastRatio: 1)
 
     /// 같은 역할의 라이트판. 97(강조)은 흰 바탕에서 사라지지 않게 검정에 가깝고,
     /// 37(보조)은 회색이다.
