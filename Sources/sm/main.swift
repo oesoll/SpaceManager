@@ -37,6 +37,12 @@ sm — SpaceManager를 터미널에서 조작한다
   sm spawn|attach|resume|ls|tail|stop|restore …
                                       에이전트 세션 — ~/.smux/bin/sm-session에 그대로 넘긴다
 
+  sm capture [-w win] <file.png> [--rect x,y,w,h]   창을 찍는다(앱이 자기 창을 찍어 화면 기록 권한이 필요 없다)
+  sm capture [-w win] --rect x,y,w,h --burst N [--every MS] [dir]
+                                      같은 자리를 N번 연달아 찍어 시각(ms)과 평균 색을 낸다(페이드 확인용)
+  sm perf [-w win] [seconds] [--do tab:N|tab:next|focus:next|ws:NAME] [--rect x,y,w,h]
+                                      그 동안 메인 스레드가 놓친 프레임. --do는 0.3초 뒤 사람이 누르는 길로
+                                      한 번 움직이고, --rect는 같은 시간축에서 그 자리가 언제 바뀌고 멈췄는지 낸다
   sm activity                         에이전트 활동 (transcript 기반)
   sm state                            window-states.json 덤프
   sm ping
@@ -105,7 +111,7 @@ while i < argv.count {
     case "--no-focus": noFocus = true
     case "-w", "--window": i += 1; windowArg = i < argv.count ? argv[i] : nil
     case "--quick", "--proxy": flags[String(a.dropFirst(2))] = "true"
-    case "--name", "--host", "--model", "--effort", "-n", "--limit":
+    case "--name", "--host", "--model", "--effort", "-n", "--limit", "--rect", "--burst", "--every", "--do":
         i += 1; flags[a.hasPrefix("--") ? String(a.dropFirst(2)) : "limit"] = i < argv.count ? argv[i] : ""
     case "-h", "--help", "help": print(usage); exit(0)
     default: positional.append(a)
@@ -157,6 +163,17 @@ do {
         if let m = flags["model"] { args["model"] = m }; if let e = flags["effort"] { args["effort"] = e }; if flags["proxy"] != nil { args["proxy"] = true }
     case ("quick", "resume"): command = "quick.resume"; args["id"] = try need(1, "sm quick resume <session-id>")[0]
     case ("quick", "home"): command = "quick.home"
+    case ("capture", _):
+        command = "window.capture"
+        if let path = sub { args["path"] = (path as NSString).expandingTildeInPath.hasPrefix("/") ? (path as NSString).expandingTildeInPath : FileManager.default.currentDirectoryPath + "/" + path }
+        if let rect = flags["rect"] { args["rect"] = rect }
+        if let burst = flags["burst"] { args["burst"] = Int(burst) ?? 1 }
+        if let every = flags["every"] { args["every"] = Int(every) ?? 8 }
+        if args["path"] == nil && args["burst"] == nil { throw CLIError(message: "usage: sm capture <file.png> | sm capture --rect x,y,w,h --burst N [dir]") }
+    case ("perf", _):
+        command = "perf.frames"; if let s = sub { args["seconds"] = s }
+        if let action = flags["do"] { args["do"] = action }
+        if let rect = flags["rect"] { args["rect"] = rect }
     case ("activity", _): command = "activity.list"
     case ("state", _): command = "state.dump"
     default: throw CLIError(message: "unknown command: \(positional.joined(separator: " "))\n\n\(usage)")

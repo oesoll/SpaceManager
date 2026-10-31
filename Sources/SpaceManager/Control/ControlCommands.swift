@@ -186,7 +186,7 @@ enum ControlCommands {
             let data = try JSONEncoder.pretty.encode(WorkspaceStorage.shared.windowStates)
             return try JSONSerialization.jsonObject(with: data)
 
-        case "quick.new", "quick.resume", "window.new":
+        case "quick.new", "quick.resume", "window.new", "window.capture", "perf.frames":
             throw fail("internal: async command reached sync dispatcher")
         default:
             throw fail("unknown command: \(r.command)")
@@ -204,6 +204,48 @@ enum ControlCommands {
             openWindow(kind: kind) { result in
                 completion(result.map { .ok(describe($0)) } ?? .error("window did not appear"))
             }
+            return true
+
+        case "window.capture":
+            let entry = try window(r)
+            guard let nsWindow = entry.window else { throw fail("window has no NSWindow yet") }
+            var rect: CGRect?
+            if let spec = r.string("rect") {
+                let parts = spec.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+                guard parts.count == 4 else { throw fail("rect must be x,y,w,h (points from the window's top-left)") }
+                rect = WindowProbe.screenRect(CGRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3]), in: nsWindow)
+            }
+            let count = r.int("burst") ?? 1
+            if count > 1 {
+                guard let rect else { throw fail("--burst needs --rect (a small area keeps the shots fast)") }
+                let every = Double(r.int("every") ?? 8) / 1000
+                WindowProbe.burst(windowNumber: nsWindow.windowNumber, screenRect: rect, count: min(count, 600),
+                                  every: every, folder: r.string("path")) { rows in
+                    completion(.ok(["frames": rows]))
+                }
+                return true
+            }
+            guard let path = r.string("path") else { throw fail("path required") }
+            guard let image = WindowProbe.image(windowNumber: nsWindow.windowNumber, screenRect: rect) else {
+                throw fail("capture failed (window off screen or minimized?)")
+            }
+            try WindowProbe.writePNG(image, to: path)
+            completion(.ok(["path": path, "width": image.width, "height": image.height,
+                            "scale": nsWindow.backingScaleFactor]))
+            return true
+
+        case "perf.frames":
+            let entry = try window(r)
+            guard let nsWindow = entry.window else { throw fail("window has no NSWindow yet") }
+            let seconds = min(max(Double(r.string("seconds") ?? "3") ?? 3, 0.2), 60)
+            let action = try r.string("do").map { try probeAction($0, state: entry.state) }
+            var watch: CGRect?
+            if let spec = r.string("rect") {
+                let parts = spec.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+                guard parts.count == 4 else { throw fail("rect must be x,y,w,h (points from the window's top-left)") }
+                watch = WindowProbe.screenRect(CGRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3]), in: nsWindow)
+            }
+            FrameProbe.run(window: nsWindow, seconds: seconds, action: action, watch: watch) { completion(.ok($0)) }
             return true
 
         case "quick.new", "quick.resume":
@@ -230,6 +272,28 @@ enum ControlCommands {
             return true
         default:
             return nil
+        }
+    }
+
+    /// `sm perf --do`: 사람이 누르는 것과 같은 길(⌘숫자, ⌥⌘←→, ⌘[ ⌘], 사이드바 클릭)로 한 번 움직인다.
+    private static func probeAction(_ spec: String, state: AppState) throws -> () -> Void {
+        let parts = spec.split(separator: ":", maxSplits: 1).map(String.init)
+        let verb = parts.first ?? "", value = parts.count > 1 ? parts[1] : ""
+        switch (verb, value) {
+        case ("tab", "next"): return { state.stepTab(forward: true) }
+        case ("tab", "prev"): return { state.stepTab(forward: false) }
+        case ("tab", _):
+            guard let number = Int(value), number >= 1 else { throw fail("tab:N (1부터) | tab:next | tab:prev") }
+            return { state.selectTab(at: number - 1) }
+        case ("focus", "next"): return { state.cyclePane(forward: true) }
+        case ("focus", "prev"): return { state.cyclePane(forward: false) }
+        case ("ws", _):
+            guard let workspace = state.workspaces.first(where: { $0.name == value || $0.tmuxSessionName == value }) else {
+                throw fail("no workspace named \(value) in this window")
+            }
+            return { state.selectWorkspace(workspace) }
+        default:
+            throw fail("--do takes tab:N | tab:next | tab:prev | focus:next | focus:prev | ws:NAME")
         }
     }
 
