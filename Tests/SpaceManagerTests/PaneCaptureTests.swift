@@ -182,7 +182,9 @@ final class PaneCaptureTests: XCTestCase {
         }
         let now = Date()
         func row(_ name: String, _ state: PeerState, since: Date, reason: String? = nil) -> PeerAgent {
-            PeerAgent(id: "claude:" + name, name: name, host: host, target: "%x", state: state, reason: reason, since: since)
+            // flat-rev만 아직 tmux 칸에 있다(target이 %NN). 나머지는 sm 세션이다.
+            PeerAgent(id: "claude:" + name, name: name, host: host, target: name == "flat-rev" ? "%173" : "hold:" + name,
+                      state: state, reason: reason, since: since)
         }
         PeerDirectory.shared.apply(PeerListing(peers: [
             row("flat-frontend", .working, since: now), row("flat-qa", .blocked, since: now.addingTimeInterval(-185), reason: "permission"),

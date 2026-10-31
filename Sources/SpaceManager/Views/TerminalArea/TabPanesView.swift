@@ -349,7 +349,7 @@ struct LayoutTabView: View {
     /// 아직 tmux에 남은 에이전트를 sm 세션으로 옮기는 버튼. 쉬는 중일 때만 켠다 — 일하는 중에 옮기면
     /// 그 턴이 끊긴다. 하네스 lane(dori-*)은 등록부 주소를 하네스가 먼저 바꿔야 해서 하네스가 옮긴다.
     private func migrateAction(for id: String, session: TerminalSession) -> LegendAction? {
-        guard layout.panes[id]?.tmuxPane != nil, let name = layout.panes[id]?.session else { return nil }
+        guard isInTmux(id), let name = layout.panes[id]?.session else { return nil }
         if name.hasPrefix("dori-") {
             return LegendAction(title: "하네스가 옮김", isEnabled: false,
                                 help: "하네스가 등록부 주소를 바꾼 뒤 옮긴다", run: {})
@@ -371,9 +371,16 @@ struct LayoutTabView: View {
         var badge = agent(for: id)
             .map { PaneBadge(agent: $0, attention: directory.attention(of: $0), title: title) }
             ?? PaneBadge(title: title)
-        // 아직 tmux에 남은 에이전트. 쉬는 상태가 되면 세션 층이 sm으로 옮길 수 있다.
-        if layout.panes[id]?.tmuxPane != nil, badge.detail == nil { badge.detail = "tmux" }
+        // 아직 tmux에 남은 에이전트. 쉬는 상태가 되면 sm으로 옮길 수 있다.
+        if isInTmux(id), badge.detail == nil { badge.detail = "tmux" }
         return badge
+    }
+
+    /// 에이전트가 아직 tmux 칸에서 도는가. 배치의 tmux_pane은 옮긴 뒤에도 보기 창으로 남으므로
+    /// 그것만으로는 모른다 — peer가 보고하는 위치(target)가 tmux 칸(`%NN`)이면 아직 tmux다.
+    private func isInTmux(_ id: String) -> Bool {
+        guard layout.panes[id]?.tmuxPane != nil, let agent = agent(for: id) else { return false }
+        return agent.target.hasPrefix("%")
     }
 }
 
