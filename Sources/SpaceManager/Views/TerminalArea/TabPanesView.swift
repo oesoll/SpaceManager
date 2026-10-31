@@ -39,7 +39,10 @@ struct TabPanesView: View {
                                  isZoomed: group.isZoomed,
                                  onFocus: { group.focus(id) },
                                  onClose: id == group.anchor.id ? nil : { group.close(id) },
-                                 onZoom: { group.toggleZoom() })
+                                 onZoom: { group.toggleZoom() },
+                                 onHoverFocus: group.isSplit && group.picking.isEmpty ? {
+                                     if group.focused != id { group.focus(id) }
+                                 } : nil)
                             .frame(width: frame.width, height: frame.height)
                             .offset(x: frame.minX, y: frame.minY)
                     }
@@ -70,6 +73,9 @@ private struct PaneCard: View {
     var showsLegend = true
     /// 이름표 오른쪽 끝의 글자 버튼 하나(예: tmux에 남은 에이전트 옮기기).
     var legendAction: LegendAction?
+    /// 포인터가 머물렀을 때 부른다. nil이면 호버로 포커스를 옮기지 않는다(고르는 상자가 떠 있을 때 등).
+    var onHoverFocus: (() -> Void)?
+    @State private var hoverWork: DispatchWorkItem?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -94,12 +100,17 @@ private struct PaneCard: View {
         }
         .background(Color(Chrome.pane))
         .clipShape(RoundedRectangle(cornerRadius: TabPanesView.radius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: TabPanesView.radius, style: .continuous)
-                .strokeBorder(Color(isFocused ? Chrome.accent : Chrome.hairline), lineWidth: 1)
-                .allowsHitTesting(false)
-        )
+        .overlay(PaneRim(isFocused: isFocused))
         .background(PaneFocusMonitor(onPress: onFocus))
+        // 포인터가 잠깐 머물면 그 패널로 포커스가 옮겨 간다(SEOL 10/31). 지나가기만 하면 옮기지 않는다 —
+        // 여러 패널을 가로질러 갈 때마다 키 입력 대상이 바뀌면 오히려 헷갈린다.
+        .onHover { inside in
+            hoverWork?.cancel()
+            guard inside, let onHoverFocus else { return }
+            let work = DispatchWorkItem(block: onHoverFocus)
+            hoverWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+        }
     }
 }
 
@@ -117,11 +128,7 @@ private struct PickerCard<Content: View>: View {
         .scrollIndicators(.never)
         .background(Color(Chrome.pane))
         .clipShape(RoundedRectangle(cornerRadius: TabPanesView.radius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: TabPanesView.radius, style: .continuous)
-                .strokeBorder(Color(isFocused ? Chrome.accent : Chrome.hairline), lineWidth: 1)
-                .allowsHitTesting(false)
-        )
+        .overlay(PaneRim(isFocused: isFocused))
     }
 }
 
@@ -342,7 +349,12 @@ struct LayoutTabView: View {
                      onClose: multiple ? { appState.closeLayoutPane(id, in: layout) } : nil,
                      onZoom: { appState.zoomLayoutPane(id, in: layout) },
                      showsLegend: multiple,
-                     legendAction: migrateAction(for: id, session: session))
+                     legendAction: migrateAction(for: id, session: session),
+                     onHoverFocus: multiple && pending == nil && drag == nil ? {
+                         guard focused != id else { return }
+                         appState.focusLayoutPane(id, in: layout)
+                         session.focusTerminal()
+                     } : nil)
         }
     }
 
