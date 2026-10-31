@@ -180,12 +180,12 @@ enum GhosttyConfigText {
                     "brightBlack", "brightRed", "brightGreen", "brightYellow",
                     "brightBlue", "brightMagenta", "brightCyan", "brightWhite"]
         var lines = [
-            // 글꼴은 xterm과 같은 순서로 찾는다(SEOL이 정한 값 — 바꾸지 않는다).
-            "font-family = D2Coding",
-            "font-family = NanumGothicCoding",
-            "font-family = Noto Sans Mono CJK KR",
-            "font-family = SF Mono",
+            // xterm 시절 SEOL이 실제로 보던 글꼴. terminal.html의 목록은 D2Coding이 먼저였지만,
+            // WebKit은 사용자가 설치한 글꼴(~/Library/Fonts)을 웹 콘텐츠에 보이지 않아 실제로는
+            // Menlo와 시스템 한글 글꼴로 그려졌다(10/31 WKWebView 글자 폭 실측). 그 목록을 그대로
+            // 옮겼더니 D2Coding이 나와 "눈이 아프다"(SEOL 10/31) — 내장 D2Coding을 철회했던 이유와 같다.
             "font-family = Menlo",
+            "font-family = Apple SD Gothic Neo",
             "font-size = 13",
             "cursor-style = bar",
             "cursor-style-blink = true",
