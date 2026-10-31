@@ -127,18 +127,18 @@ final class TerminalLayoutTransition: ObservableObject {
 
 /// 터미널 뷰를 담는 컨테이너. 윈도우에 붙은 컨테이너만 터미널을 소유한다.
 final class TerminalHostView: NSView {
-    private(set) weak var terminal: TerminalWebView?
+    private(set) weak var terminal: GhosttyTerminalView?
     var animatesTransitions = true
-    private var outgoing: TerminalWebView?
+    private var outgoing: GhosttyTerminalView?
     private var swapGeneration = 0
     private var resizeDeferred = false
     private var liveResize = false
-    private let preparePresentation: (TerminalWebView, @escaping () -> Void) -> Void
+    private let preparePresentation: (GhosttyTerminalView, @escaping () -> Void) -> Void
 
     override var isFlipped: Bool { true }
 
     init(frame: NSRect = .zero,
-         preparePresentation: @escaping (TerminalWebView, @escaping () -> Void) -> Void = { view, completion in
+         preparePresentation: @escaping (GhosttyTerminalView, @escaping () -> Void) -> Void = { view, completion in
              view.prepareForPresentation(completion)
          }) {
         self.preparePresentation = preparePresentation
@@ -157,13 +157,13 @@ final class TerminalHostView: NSView {
     }
 
     @discardableResult
-    func show(_ next: TerminalWebView) -> Bool {
+    func show(_ next: GhosttyTerminalView) -> Bool {
         let changed = terminal !== next
         if changed, window != nil, outgoing === next {
             // A→B→A before B has painted: the visible A is already correct.
             swapGeneration += 1
             for view in subviews where view !== next {
-                (view as? TerminalWebView)?.cancelPresentation()
+                (view as? GhosttyTerminalView)?.cancelPresentation()
                 view.removeFromSuperview()
             }
             next.cancelPresentation()
@@ -184,9 +184,9 @@ final class TerminalHostView: NSView {
         let generation = swapGeneration
         // Keep at most two surfaces, including during rapid A→B→C selection.
         // The outgoing view stays opaque until WebKit acknowledges a new frame.
-        let previous = outgoing ?? subviews.compactMap { $0 as? TerminalWebView }.first
+        let previous = outgoing ?? subviews.compactMap { $0 as? GhosttyTerminalView }.first
         for view in subviews where view !== previous {
-            (view as? TerminalWebView)?.cancelPresentation()
+            (view as? GhosttyTerminalView)?.cancelPresentation()
             view.removeFromSuperview()
         }
         previous?.cancelPresentation()

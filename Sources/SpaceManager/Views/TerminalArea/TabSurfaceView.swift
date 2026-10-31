@@ -29,8 +29,7 @@ private struct TabSurfaceContent: View {
                 // 작업 창은 카드 라운딩이 없어 글자가 세로선에 붙는다. 셀 한 칸 남짓 들인다.
                 SingleTerminalView()
                     .padding(EdgeInsets(top: 6, leading: 12, bottom: 4, trailing: 4))
-                    // terminal.html의 WKWebView는 drawsBackground=false다. 카드 자체가 팔레트와
-                    // 같은 불투명색을 그려 바탕이 글자 뒤로 새지 않게 한다.
+                    // 카드가 팔레트와 같은 색을 깔아 터미널 둘레 여백도 같은 면으로 읽힌다.
                     .background(Color(Chrome.pane))
                     .clipShape(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous)

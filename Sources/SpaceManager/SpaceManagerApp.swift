@@ -50,13 +50,8 @@ struct SpaceManagerApp: App {
 
     var body: some Scene {
         WindowGroup(id: "main", for: UUID.self) { $windowStateId in
-            if ProcessInfo.processInfo.environment["SM_SPIKE"] == "1" {
-                TerminalSpikeView()
-                    .frame(minWidth: 900, minHeight: 600)
-            } else {
-                ContentView(windowStateId: $windowStateId)
-                    .frame(minWidth: 900, minHeight: 600)
-            }
+            ContentView(windowStateId: $windowStateId)
+                .frame(minWidth: 900, minHeight: 600)
         }
         .windowStyle(.hiddenTitleBar)
         .commands {

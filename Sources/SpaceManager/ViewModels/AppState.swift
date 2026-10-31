@@ -128,7 +128,7 @@ class AppState: ObservableObject {
                 selectedSessionIdByWorkspace[wsTabs.workspaceId] = selectedId
             }
         }
-        // 터미널 프로세스는 여기서 시작하지 않는다 — 뷰가 붙고 xterm이 ready될 때 게으르게 시작
+        // 터미널 프로세스는 여기서 시작하지 않는다 — 탭이 처음 화면에 붙을 때 게으르게 시작
         if let wsId = state.selectedWorkspaceId,
            let workspace = workspaces.first(where: { $0.id == wsId }) {
             selectWorkspace(workspace)

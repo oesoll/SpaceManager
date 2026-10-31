@@ -29,3 +29,6 @@ SpaceManager-*.dmg
 
 # Local verification receipts
 .claude/ledger/
+
+# libghostty 빌드 산출물 — scripts/build-ghostty.sh로 만든다
+Frameworks/

@@ -38,7 +38,7 @@ enum GlassSurfacePolicy {
         }
     }
 
-    /// WKWebView는 drawsBackground=false이므로 카드가 직접 팔레트 배경을 막는다.
+    /// 터미널 표면 둘레(여백)도 팔레트 배경으로 보이게 카드가 같은 색을 깐다.
     /// 작업 창은 창의 라이트/다크를 따르는 작업면 색이다.
     static func terminalCardColor(for windowKind: WindowKind) -> NSColor {
         switch windowKind {

@@ -89,37 +89,3 @@ final class RemoteConnectionTests: XCTestCase {
 }
 
 /// 원격 tmux의 복사는 OSC 52로 온다. Mac 페이스트보드까지 닿아야 한다.
-final class TerminalClipboardTests: XCTestCase {
-    func testDecodesOSC52WritesAndRejectsQueriesAndGarbage() {
-        XCTAssertEqual(TerminalClipboard.decodeOSC52(Data("한글 copy".utf8).base64EncodedString()), "한글 copy")
-        XCTAssertNil(TerminalClipboard.decodeOSC52("?"), "읽기 질의로 Mac 클립보드를 내주면 안 된다")
-        XCTAssertNil(TerminalClipboard.decodeOSC52(""))
-        XCTAssertNil(TerminalClipboard.decodeOSC52("!!!"))
-        XCTAssertNil(TerminalClipboard.decodeOSC52(Data([0xff, 0xfe, 0xfd]).base64EncodedString()))
-    }
-
-    func testXtermOSC52ReachesNativeClipboardWriter() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
-                              styleMask: [.titled], backing: .buffered, defer: false)
-        let terminal = TerminalWebView(frame: window.contentView!.bounds)
-        window.contentView = terminal
-        defer { window.contentView = nil }
-        var written: [String] = []
-        terminal.writeClipboard = { written.append($0) }
-        var ready = false
-        terminal.onReady = { ready = true }
-        waitUntil { ready }
-
-        // tmux 3.7이 실제로 보내는 형태: 선택 인자 비움, BEL 종료
-        let text = "copied on arch ✓"
-        terminal.feed(Data("\u{1B}]52;?\u{07}\u{1B}]52;;\(Data(text.utf8).base64EncodedString())\u{07}".utf8))
-        waitUntil { !written.isEmpty }
-        XCTAssertEqual(written, [text])
-    }
-
-    private func waitUntil(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) {
-        let deadline = Date().addingTimeInterval(8)
-        while !condition(), Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
-        XCTAssertTrue(condition(), file: file, line: line)
-    }
-}

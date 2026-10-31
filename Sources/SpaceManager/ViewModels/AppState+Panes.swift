@@ -16,21 +16,23 @@ extension AppState {
         }
     }
 
-    /// holder가 쥔 에이전트를 지금 탭의 새 패널로 연다. 이미 이 창의 패널에 붙어 있으면 그 패널로 간다.
-    func openHeldAgentInPane(socket: String, host: String, agent: PeerAgent?, axis: PaneAxis = .horizontal) {
+    /// peer가 아는 에이전트를 지금 탭의 새 패널로 연다. 이미 이 창의 패널에 붙어 있으면 그 패널로 간다.
+    func openAgentInPane(_ agent: PeerAgent, axis: PaneAxis = .horizontal) {
         guard windowKind == .workspace, let tab = selectedSession, let workspace = selectedWorkspace else { return }
-        let attachment = TerminalAttachment.hold(socket: socket, host: host, agent: agent?.id)
         for candidate in sessions {
-            if let pane = paneSessions(of: candidate).first(where: { $0.attachment == attachment }) {
+            if let pane = paneSessions(of: candidate).first(where: {
+                if case .agent(_, let host, let id) = $0.attachment { return id == agent.id && host == agent.host }
+                return false
+            }) {
                 selectSession(candidate)
                 panes.group(for: candidate)?.focus(pane.id)
                 return
             }
         }
         panes.ensureGroup(for: tab).split(axis) { id in
-            TerminalSession(id: id, kind: .shell, name: agent?.name ?? (socket as NSString).lastPathComponent,
+            TerminalSession(id: id, kind: .shell, name: agent.name,
                             workingDirectory: workspace.rootPath,
-                            attachment: attachment)
+                            attachment: .agent(name: agent.name, host: agent.host, agent: agent.id))
         }
     }
 
@@ -77,7 +79,7 @@ extension PeerDirectory {
     /// 패널의 에이전트. holder에 붙은 패널은 peer 행 id로, sm이 직접 띄운 셸 속 에이전트는
     /// target(`sm:<패널 UUID>`)으로 찾는다.
     func agent(for session: TerminalSession, includeStale: Bool = false) -> PeerAgent? {
-        if case .hold(_, let host, let id?) = session.attachment {
+        if case .agent(_, let host, let id?) = session.attachment {
             return agents.first { (includeStale || !$0.isStale) && $0.id == id && $0.host == host }
         }
         return agent(forPane: session.id, includeStale: includeStale)

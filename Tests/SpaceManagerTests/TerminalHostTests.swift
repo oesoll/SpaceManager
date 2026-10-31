@@ -3,7 +3,7 @@ import XCTest
 @testable import SpaceManager
 
 final class TerminalHostTests: XCTestCase {
-    private func makeHost(preparePresentation: @escaping (TerminalWebView, @escaping () -> Void) -> Void = { view, completion in
+    private func makeHost(preparePresentation: @escaping (GhosttyTerminalView, @escaping () -> Void) -> Void = { view, completion in
         view.prepareForPresentation(completion)
     }) -> (NSWindow, TerminalHostView) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
@@ -25,14 +25,14 @@ final class TerminalHostTests: XCTestCase {
         XCTAssertTrue(condition(), description, file: file, line: line)
     }
 
-    func testSwapKeepsOutgoingSurfaceUntilWebKitPaintsThenReusesCachedViews() {
+    func testSwapKeepsOutgoingSurfaceUntilNewSurfacePaintsThenReusesCachedViews() {
         // Control the asynchronous paint acknowledgement independently of the
         // WindowServer (which pauses rendering in background test runners).
         var painted: [() -> Void] = []
         let (window, host) = makeHost { _, completion in painted.append(completion) }
         defer { window.contentView = nil }
-        let first = TerminalWebView(frame: .zero)
-        let second = TerminalWebView(frame: .zero)
+        let first = GhosttyTerminalView(frame: .zero)
+        let second = GhosttyTerminalView(frame: .zero)
 
         XCTAssertTrue(host.show(first))
         XCTAssertTrue(first.superview === host)
@@ -42,10 +42,10 @@ final class TerminalHostTests: XCTestCase {
         XCTAssertTrue(host.show(second))
         XCTAssertTrue(first.superview === host, "Keep the old surface while the cold page loads")
         XCTAssertEqual(first.alphaValue, 1)
-        XCTAssertTrue(host.subviews.last === first, "The old surface covers the loading WebKit view")
+        XCTAssertTrue(host.subviews.last === first, "The old surface covers the new one until it has drawn")
         XCTAssertEqual(second.frame, host.bounds)
         painted.last?()
-        waitUntil("New xterm render acknowledgement releases the outgoing surface") { first.superview == nil }
+        waitUntil("The new surface's first frame releases the outgoing surface") { first.superview == nil }
         XCTAssertTrue(host.subviews.first === second)
         XCTAssertEqual(host.subviews.count, 1)
 
@@ -69,9 +69,9 @@ final class TerminalHostTests: XCTestCase {
         var painted: [() -> Void] = []
         let (window, host) = makeHost { _, completion in painted.append(completion) }
         defer { window.contentView = nil }
-        let first = TerminalWebView(frame: .zero)
-        let second = TerminalWebView(frame: .zero)
-        let third = TerminalWebView(frame: .zero)
+        let first = GhosttyTerminalView(frame: .zero)
+        let second = GhosttyTerminalView(frame: .zero)
+        let third = GhosttyTerminalView(frame: .zero)
         host.show(first)
         host.show(second)
         host.show(third)
@@ -88,41 +88,10 @@ final class TerminalHostTests: XCTestCase {
         XCTAssertTrue(first.superview === host, "Stale callbacks cannot remove the current tab")
     }
 
-    func testDeferredViewportEmitsOneRealXtermResizeAtTheFinalSize() {
-        let (window, host) = makeHost()
-        defer { window.contentView = nil }
-        let terminal = TerminalWebView(frame: .zero)
-        var ready = false
-        var resizes: [(UInt16, UInt16)] = []
-        terminal.onReady = { ready = true }
-        terminal.onResize = { resizes.append(($0, $1)) }
-        host.show(terminal)
-        waitUntil("Bundled xterm page loads") { ready }
-        settle(0.3)
-        resizes.removeAll()
-        let initialFrame = terminal.frame
-
-        host.setResizeDeferred(true)
-        for width in stride(from: 648, through: 824, by: 8) {
-            host.setFrameSize(NSSize(width: width, height: 480))
-            host.layoutSubtreeIfNeeded()
-            XCTAssertEqual(terminal.frame, initialFrame)
-        }
-        settle(0.2)
-        XCTAssertTrue(resizes.isEmpty, "No intermediate size may reach the PTY callback")
-        host.setResizeDeferred(false)
-        XCTAssertEqual(terminal.frame, host.bounds)
-        XCTAssertEqual(terminal.subviews.first?.frame.size, host.bounds.size)
-        waitUntil("Final viewport reaches xterm and the PTY callback") { !resizes.isEmpty }
-        settle(0.2)
-        XCTAssertEqual(resizes.count, 1, "Native fit and ResizeObserver must not duplicate resize")
-        XCTAssertEqual(resizes.last?.0, terminal.lastCols)
-    }
-
     func testInterruptedPanelAnimationAndLiveResizeReleaseOnlyTheLatestSize() {
         let (window, host) = makeHost()
         defer { window.contentView = nil }
-        let terminal = TerminalWebView(frame: .zero)
+        let terminal = GhosttyTerminalView(frame: .zero)
         host.show(terminal)
         let transition = TerminalLayoutTransition()
         transition.attach(host)
@@ -154,8 +123,8 @@ final class TerminalHostTests: XCTestCase {
     func testTabSelectedDuringPanelAnimationKeepsTheHeldViewport() {
         let (window, host) = makeHost()
         defer { window.contentView = nil }
-        let first = TerminalWebView(frame: .zero)
-        let second = TerminalWebView(frame: .zero)
+        let first = GhosttyTerminalView(frame: .zero)
+        let second = GhosttyTerminalView(frame: .zero)
         host.show(first)
         let initial = first.frame
         host.setResizeDeferred(true)
@@ -171,7 +140,7 @@ final class TerminalHostTests: XCTestCase {
     func testDetachedHostCannotStealAnOnscreenTerminal() {
         let (window, visibleHost) = makeHost()
         defer { window.contentView = nil }
-        let terminal = TerminalWebView(frame: .zero)
+        let terminal = GhosttyTerminalView(frame: .zero)
         visibleHost.show(terminal)
         let detachedHost = TerminalHostView(frame: .zero)
         detachedHost.show(terminal)
@@ -184,8 +153,8 @@ final class TerminalHostTests: XCTestCase {
     func testInputTargetsTheSelectedTabWhileTheOutgoingSurfaceCoversIt() {
         let (window, host) = makeHost { _, _ in } // Hold the incoming paint acknowledgement.
         defer { window.contentView = nil }
-        let first = TerminalWebView(frame: .zero)
-        let second = TerminalWebView(frame: .zero)
+        let first = GhosttyTerminalView(frame: .zero)
+        let second = GhosttyTerminalView(frame: .zero)
         host.show(first)
         host.show(second)
         XCTAssertTrue(host.subviews.last === first)

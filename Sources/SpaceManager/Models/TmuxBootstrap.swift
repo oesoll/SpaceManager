@@ -62,7 +62,7 @@ enum TmuxBootstrap {
     static let coldBootWindowSeconds: TimeInterval = 150
 
     /// 탭이 실행할 부트스트랩 스크립트 선택. 메인 스레드에서만 호출된다
-    /// (PTY 시작은 WKWebView ready 콜백 → 메인 스레드 경유).
+    /// (터미널 표면은 메인 스레드에서 만들어진다).
     static func startupScript(sessionName: String, workingDirectory: String) -> String {
         let role = startupRole(socketExists: serverSocketExists, coldBootAt: coldBootAt)
         switch role {

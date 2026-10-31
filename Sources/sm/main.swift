@@ -34,6 +34,9 @@ sm — SpaceManager를 터미널에서 조작한다
   sm quick resume <session-id>
   sm quick home
 
+  sm spawn|attach|resume|ls|tail|stop|restore …
+                                      에이전트 세션 — ~/.smux/bin/sm-session에 그대로 넘긴다
+
   sm activity                         에이전트 활동 (transcript 기반)
   sm state                            window-states.json 덤프
   sm ping
@@ -74,6 +77,21 @@ func send(_ command: String, _ args: [String: Any]) throws -> [String: Any] {
 // MARK: - 인자 파싱
 
 var argv = Array(CommandLine.arguments.dropFirst())
+
+// 세션 층 명령은 기기마다 도는 sm-session이 맡는다(10/31 cld-claude-7과 정한 두 층). 맥에서도
+// `sm spawn …`이 아치·누크와 같은 명령이 되도록 인자를 그대로 넘기고 이 프로세스를 바꿔 끼운다.
+let sessionCommands: Set<String> = ["spawn", "attach", "resume", "ls", "tail", "stop", "restore"]
+if let first = argv.first, sessionCommands.contains(first) {
+    let sessionCLI = (NSHomeDirectory() as NSString).appendingPathComponent(".smux/bin/sm-session")
+    guard FileManager.default.isExecutableFile(atPath: sessionCLI) else {
+        FileHandle.standardError.write("sm: \(first)는 세션 층(~/.smux/bin/sm-session)이 맡는데, 이 기기에 없습니다\n".data(using: .utf8)!)
+        exit(127)
+    }
+    let cArgs = ([sessionCLI] + argv).map { strdup($0) } + [nil]
+    execv(sessionCLI, cArgs)
+    FileHandle.standardError.write("sm: sm-session 실행 실패: \(String(cString: strerror(errno)))\n".data(using: .utf8)!)
+    exit(126)
+}
 var wantJSON = false
 var windowArg: String?
 var noFocus = false

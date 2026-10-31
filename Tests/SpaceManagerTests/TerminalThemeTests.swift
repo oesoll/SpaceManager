@@ -25,7 +25,9 @@ final class TerminalThemeTests: XCTestCase {
     func testBothPalettesDefineEveryANSISlot() throws {
         for palette in [TerminalPalette.quickLight, .workspaceDark] {
             XCTAssertEqual(Set(Self.ansi16).subtracting(palette.colors.keys), [])
-            XCTAssertNotNil(palette.json)
+            // 16칸이 모두 Ghostty 설정의 palette 줄이 된다.
+            let config = GhosttyConfigText.make(palette: palette)
+            XCTAssertEqual(config.components(separatedBy: "\npalette = ").count - 1, 16)
         }
         XCTAssertEqual(TerminalPalette.quickLight.colors["background"], "#ffffff")
         // 워크스페이스 터미널 카드(GlassSurfacePolicy.terminalCardColor)와 같은 바탕.

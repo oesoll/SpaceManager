@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import WebKit
 import XCTest
 @testable import SpaceManager
 
@@ -67,30 +66,11 @@ final class WindowCaptureTests: XCTestCase {
         window.orderFrontRegardless()
         defer { window.orderOut(nil) }
         RunLoop.main.run(until: Date().addingTimeInterval(1.5))
-        // 테스트 창은 WebKit이 '가려짐'으로 보고 xterm이 그리지 않는다. 가림 감지를 끄고,
-        // 창 캡처에 잡히지 않는 WebGL 대신 같은 테마로 칠하는 DOM 렌더러로 내린다.
-        for web in webViews(in: window.contentView) {
-            let selector = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
-            if web.responds(to: selector) {
-                typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
-                unsafeBitCast(web.method(for: selector), to: Setter.self)(web, selector, false)
-            }
-            web.evaluateJavaScript("""
-                try { term._addonManager._addons.forEach(a => { if (a.instance.constructor.name.includes('Webgl')) a.instance.dispose(); });
-                      term.refresh(0, term.rows - 1); } catch (e) {}
-                """, completionHandler: nil)
-        }
         RunLoop.main.run(until: Date().addingTimeInterval(3.0))
 
         typealias CreateImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
         let handle = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW)
         let createImage = unsafeBitCast(try XCTUnwrap(dlsym(handle, "CGWindowListCreateImage")), to: CreateImage.self)
         return try XCTUnwrap(createImage(.null, 1 << 3, UInt32(window.windowNumber), 1)?.takeRetainedValue())
-    }
-
-    private func webViews(in view: NSView?) -> [WKWebView] {
-        guard let view else { return [] }
-        if let web = view as? WKWebView { return [web] }
-        return view.subviews.flatMap { webViews(in: $0) }
     }
 }

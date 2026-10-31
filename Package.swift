@@ -7,18 +7,25 @@ let package = Package(
         .macOS(.v14)
     ],
     targets: [
-        .target(
-            name: "CPty",
-            path: "Sources/CPty"
+        // libghostty. scripts/build-ghostty.sh가 Frameworks/에 만든다.
+        .binaryTarget(
+            name: "GhosttyKit",
+            path: "Frameworks/GhosttyKit.xcframework"
         ),
         .executableTarget(
             name: "SpaceManager",
             dependencies: [
-                "CPty"
+                "GhosttyKit"
             ],
             path: "Sources/SpaceManager",
-            resources: [
-                .copy("Terminal/Resources")
+            exclude: ["Terminal/Ghostty/LICENSE-ghostty"],
+            linkerSettings: [
+                .linkedLibrary("c++"),
+                .linkedFramework("Metal"),
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("CoreText"),
+                .linkedFramework("IOSurface"),
+                .linkedFramework("Carbon")
             ]
         ),
         .executableTarget(

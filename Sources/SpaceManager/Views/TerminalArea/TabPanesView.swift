@@ -161,7 +161,7 @@ private struct GapHandle: View {
     }
 }
 
-/// 패널 안 어디를 눌러도 그 패널로 포커스가 옮겨 간다. 터미널(WKWebView)이 마우스를 먼저 받으므로
+/// 패널 안 어디를 눌러도 그 패널로 포커스가 옮겨 간다. 터미널 표면(AppKit 뷰)이 마우스를 먼저 받으므로
 /// SwiftUI 제스처로는 못 잡는다 — 창의 마우스 다운을 엿보고 이벤트는 그대로 흘려보낸다.
 /// 누르는 순간 옮긴다(놓을 때가 아니라).
 private struct PaneFocusMonitor: NSViewRepresentable {

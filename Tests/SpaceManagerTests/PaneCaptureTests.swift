@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
-import WebKit
 import XCTest
 @testable import SpaceManager
 
 /// 패널 분할과 에이전트 상태를 실제 창으로 찍는다. SEOL이 화면을 판정하는 데 쓴다.
 /// `WindowCaptureTests`와 같은 격리(`SM_CAPTURE=1`, 격리 홈, 격리 `TMUX_TMPDIR`)에서만 돈다.
-/// 패널은 진짜 셸이고, 에이전트 화면은 그 셸에서 텍스트 파일을 찍어 흉내 낸다. 상태는 가짜 peer 행이다.
+/// 패널은 진짜 셸(libghostty 표면)이고, 에이전트 화면은 그 셸에서 텍스트 파일을 찍어 흉내 낸다.
+/// 상태는 가짜 peer 행이다.
 /// 결과는 `.build/window-capture/panes-<dark|light>.png`.
 final class PaneCaptureTests: XCTestCase {
     @MainActor
@@ -124,10 +124,12 @@ final class PaneCaptureTests: XCTestCase {
         defer { window.orderOut(nil) }
         for (index, id) in ids.enumerated() {
             let file = screenDir.appendingPathComponent("\(index).txt").path
-            group.session(for: id)?.terminalView?.onUserInput?(Data("clear; cat '\(file)'; sleep 600\r".utf8))
+            let terminal = group.session(for: id)?.terminalView
+            terminal?.sendText("clear; cat '\(file)'; sleep 600")
+            terminal?.pressReturn()
         }
         RunLoop.main.run(until: Date().addingTimeInterval(2.5))
-        let image = try composite(capture(window), webViewsOf: window)
+        let image = try capture(window)
         let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
         let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -152,26 +154,6 @@ final class PaneCaptureTests: XCTestCase {
         window.level = .floating
         window.orderFrontRegardless()
         RunLoop.main.run(until: Date().addingTimeInterval(2.0))
-        // 테스트 창은 WebKit이 '가려짐'으로 보고 xterm이 그리지 않는다. 가림 감지를 끄고,
-        // 창 캡처에 잡히지 않는 WebGL 대신 같은 테마로 칠하는 DOM 렌더러로 내린다.
-        for web in webViews(in: window.contentView) {
-            let selector = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
-            if web.responds(to: selector) {
-                typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
-                unsafeBitCast(web.method(for: selector), to: Setter.self)(web, selector, false)
-            }
-            web.evaluateJavaScript("""
-                try { term._addonManager._addons.forEach(a => { if (a.instance.constructor.name.includes('Webgl')) a.instance.dispose(); });
-                      term.refresh(0, term.rows - 1); } catch (e) {}
-                """, completionHandler: nil)
-        }
-        // 가림 감지를 끈 뒤에도 이미 hidden이 된 페이지는 창 상태가 바뀔 때까지 그대로다.
-        window.orderOut(nil)
-        window.orderFrontRegardless()
-        window.setContentSize(NSSize(width: size.width, height: size.height - 1))
-        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        window.setContentSize(size)
-        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
         return window
     }
 
@@ -181,45 +163,6 @@ final class PaneCaptureTests: XCTestCase {
         let handle = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW)
         let createImage = unsafeBitCast(try XCTUnwrap(dlsym(handle, "CGWindowListCreateImage")), to: CreateImage.self)
         return try XCTUnwrap(createImage(.null, 1 << 3, UInt32(window.windowNumber), 1)?.takeRetainedValue())
-    }
-
-    /// 창 캡처에는 WKWebView 내용이 비어 나온다. 터미널마다 WebKit 스냅숏을 떠서 제자리에 덧그린다.
-    @MainActor
-    private func composite(_ base: CGImage, webViewsOf window: NSWindow) throws -> CGImage {
-        let content = try XCTUnwrap(window.contentView)
-        let scale = CGFloat(base.width) / content.bounds.width
-        let context = try XCTUnwrap(CGContext(data: nil, width: base.width, height: base.height, bitsPerComponent: 8,
-                                              bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-                                              bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue))
-        context.draw(base, in: CGRect(x: 0, y: 0, width: base.width, height: base.height))
-        for web in webViews(in: content) where web.window != nil && !web.isHidden && web.alphaValue > 0 {
-            var shot: NSImage?
-            web.takeSnapshot(with: nil) { image, _ in shot = image }
-            let deadline = Date().addingTimeInterval(5)
-            while shot == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
-            guard let cg = shot?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
-            // 창 좌표(아래가 0)를 그대로 CG 좌표로 쓴다. 보이는 부분만 — 부모가 자른 곳은 자른다.
-            var rect = web.convert(web.bounds, to: nil)
-            var clip = rect
-            var ancestor = web.superview
-            while let view = ancestor {
-                clip = clip.intersection(view.convert(view.bounds, to: nil))
-                ancestor = view.superview
-            }
-            rect = CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale)
-            clip = CGRect(x: clip.minX * scale, y: clip.minY * scale, width: clip.width * scale, height: clip.height * scale)
-            context.saveGState()
-            context.clip(to: clip)
-            context.draw(cg, in: rect)
-            context.restoreGState()
-        }
-        return try XCTUnwrap(context.makeImage())
-    }
-
-    private func webViews(in view: NSView?) -> [WKWebView] {
-        guard let view else { return [] }
-        if let web = view as? WKWebView { return [web] }
-        return view.subviews.flatMap { webViews(in: $0) }
     }
 }
 

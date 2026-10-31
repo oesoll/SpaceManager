@@ -1,9 +1,9 @@
 import Foundation
 
-/// xterm.js에 전달하는 창 종류별 팔레트.
+/// 터미널(libghostty)에 전달하는 창 종류별 팔레트.
 struct TerminalPalette: Equatable {
     let colors: [String: String]
-    /// 팔레트가 닿지 않는 truecolor(Codex의 문법 강조 등)도 읽히게 xterm이 글자 명도를 보정한다.
+    /// 팔레트가 닿지 않는 truecolor(Codex의 문법 강조 등)도 읽히게 터미널이 글자 명도를 보정한다.
     var minimumContrastRatio: Double = 4.5
 
     /// ANSI 16색은 "색 이름"이 아니라 "역할"로 칠한다 — Fine과 같은 팔레트다.
@@ -73,12 +73,4 @@ struct TerminalPalette: Equatable {
 
     /// 라이트 작업 창은 Quick과 같은 라이트 역할 팔레트를 쓴다.
     static let workspaceLight = quickLight
-
-    var json: String? {
-        guard let data = try? JSONSerialization.data(
-            withJSONObject: colors,
-            options: [.sortedKeys]
-        ) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
 }

@@ -20,11 +20,13 @@ SpaceManager only attaches to tmux sessions by name. It does not own the tmux se
 
 This boundary was added after real session-loss incidents. App deployment, window restoration, and tmux restoration now remain separate concerns.
 
-### Native window management, web terminal surface
+### Native windows, libghostty terminals
 
-Windows, sidebars, state, and navigation use SwiftUI and AppKit. Only the terminal surface uses `WKWebView` with vendored xterm.js and its WebGL renderer. A small C `forkpty` shim connects xterm.js to local processes.
+Windows, sidebars, state, and navigation use SwiftUI and AppKit. Each terminal is a [libghostty](https://github.com/ghostty-org/ghostty) surface: it owns its PTY and child process and draws with Metal inside the app process. Keyboard and Korean IME handling follow Ghostty's own macOS view (`interpretKeyEvents` and `NSTextInputClient`, reusing the original key event when modifiers are unchanged).
 
-This keeps macOS window behavior native while retaining terminal behavior required by tmux and CLI TUIs.
+Terminals used to be a `WKWebView` running xterm.js. Every web view started its own WebKit content process, so four panes meant four more processes of tens of MB each (measured 10/31). With libghostty the first terminal adds about 18 MB to the app for Metal and font setup and each further terminal about 3 MB, with no helper processes. The palette, minimum contrast and font order are the same values xterm used; sm writes its own Ghostty config and does not read the user's Ghostty settings.
+
+On macOS libghostty starts every command through `login(1)`. sm's build applies one patch (`scripts/ghostty-patches/hushlogin.patch`) so that does not print "Last login" in every pane.
 
 Workspace windows place a sidebar card and a terminal card on a flat canvas, separated by hairlines rather than shadows. Each sidebar row shows a folder icon (its color can be set per workspace from the context menu), the name, the activity dot, and where it runs (`mac`, `arch`, …). The sidebar button switches between the full sidebar and a compact rail of colored folder icons at the same vertical positions. Light and dark apply to the whole window, terminal palette included.
 
@@ -62,7 +64,7 @@ A tab can be split into panes (⌘D right, ⇧⌘D down, ⌘[ / ⌘] to move, �
 
 Agent state comes from `peer --all --json`, read every two seconds while a window is visible. A pane is matched to its agent through the `SM_PANE_ID` its shell receives (peer reports it as `sm:<UUID>`); tmux sessions still running agents are matched by host and session name until they move off tmux. States are told apart by shape as well as colour: a pink exclamation circle waits on you (permission or question), an amber triangle failed, the existing spinner is working, and a plain dot means it finished after you last looked at that pane. Idle panes show nothing. Workspace and tab rows show the most urgent state inside them, and ⌘J jumps to the next pane waiting on you. "Finished but unseen" is remembered by the app, not by peer, and starts empty on launch.
 
-How a pane attaches to its terminal lives in one file, `TerminalAttachment`: a login shell, or `peer-hold attach --sock …` for an agent whose PTY is held by its machine (behind `ssh -t` when remote).
+How a pane attaches to its terminal lives in one file, `TerminalAttachment`: a login shell, or `sm-session attach NAME@HOST` for an agent session. The session layer (`sm-session`, a CLI on every machine) starts, keeps, attaches to and revives agent sessions, the work tmux used to do; it picks the local holder or `ssh -t` to the other machine. The `sm` CLI passes `spawn`, `attach`, `resume`, `ls`, `tail`, `stop` and `restore` straight to it, so `sm spawn …` is the same command on every machine.
 
 ## How to use
 
@@ -80,12 +82,14 @@ Quick conversations run Claude Code, found on your PATH. Their working directory
 ```sh
 git clone https://github.com/NEWBIE0413/SpaceManager.git
 cd SpaceManager
+brew install zig            # 0.17, needed once to build libghostty
+./scripts/build-ghostty.sh  # pinned Ghostty commit → Frameworks/GhosttyKit.xcframework
 ./scripts/test-isolated.sh
 swift build -c release
 .build/release/SpaceManager
 ```
 
-SwiftPM produces the executable and its resource bundle. This repository does not currently include a general-purpose `.app` packaging script.
+`build-ghostty.sh` clones Ghostty into `~/.cache/sm-ghostty`, applies `scripts/ghostty-patches/`, and builds the static library (about 140 MB, not committed). SwiftPM then produces the executable. This repository does not currently include a general-purpose `.app` packaging script.
 
 The test wrapper gives Foundation a temporary home directory because some window-state tests instantiate the application's storage singleton. Scanner benchmarks use synthetic transcripts: `python3 scripts/benchmark-scanners.py`. See [the resource optimization measurements](docs/performance/2026-09-09-scanners.md) for the comparison and its limits.
 
@@ -94,8 +98,8 @@ The development machine uses an existing `/Applications/WorkspaceManager.app` bu
 ```sh
 APP=/Applications/WorkspaceManager.app
 cp .build/release/SpaceManager "$APP/Contents/MacOS/SpaceManager"
+# The xterm.js resource bundle is gone since terminals moved to libghostty.
 rm -rf "$APP/Contents/Resources/SpaceManager_SpaceManager.bundle"
-cp -R .build/release/SpaceManager_SpaceManager.bundle "$APP/Contents/Resources/"
 codesign --force -s - "$APP"
 ```
 
@@ -283,7 +287,7 @@ command in the same commit.
 
 - Demo recorded with [OpenScreen](https://github.com/siddharthvaddem/openscreen).
 - Agent orchestration uses the [smux](https://github.com/ShawnPana/smux) skill by [ShawnPana](https://github.com/ShawnPana). The development of SpaceManager itself was coordinated through this protocol.
-- Terminal rendering uses [xterm.js](https://github.com/xtermjs/xterm.js).
+- Terminal rendering and input use [libghostty](https://github.com/ghostty-org/ghostty) (MIT). The surface view and its IME handling are adapted from Ghostty's macOS app.
 - Session management and recovery use [tmux](https://github.com/tmux/tmux), [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect), and [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum).
 
 SpaceManager is released under the [MIT License](LICENSE).
