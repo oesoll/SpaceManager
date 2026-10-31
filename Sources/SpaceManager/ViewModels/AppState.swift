@@ -29,6 +29,9 @@ class AppState: ObservableObject {
     private var selectedSessionObservation: AnyCancellable?
     /// 탭별 패널 분할. 나누지 않은 탭은 여기 없다.
     let panes = PaneStore()
+    /// 배치 데이터가 있는 워크스페이스의 패널 터미널과 화면 쪽 상태.
+    let layoutTerminals = LayoutTerminals()
+    let layoutInteraction = LayoutInteraction()
 
     @Published var showNewWorkspaceSheet = false
     @Published var showAddProjectSheet = false

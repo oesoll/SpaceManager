@@ -122,7 +122,8 @@ enum QuickComposerPreferences {
 
 @MainActor
 final class QuickModelCatalog: ObservableObject {
-    static let fallbackModels: [QuickModelOption] = [
+    // 상수 목록이라 어느 스레드에서 읽어도 된다(새 에이전트 상자가 뒤에서도 쓴다).
+    nonisolated static let fallbackModels: [QuickModelOption] = [
         QuickModelOption(id: "claude-opus-4-8", displayName: "Opus 4.8"),
         QuickModelOption(id: "claude-sonnet-5", displayName: "Sonnet 5"),
         QuickModelOption(id: "claude-fable-5", displayName: "Fable 5"),

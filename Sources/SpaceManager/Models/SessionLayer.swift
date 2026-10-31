@@ -64,7 +64,16 @@ enum SessionLayer {
         return args
     }
 
-    /// 이 워크스페이스 폴더 아래에서 패널 없이 도는(또는 끝난) 세션 — 고르는 상자의 "가져오기" 목록.
+    /// 이 워크스페이스에서 패널 없이 도는(또는 끝난) 세션 — 고르는 상자의 "가져오기" 목록.
+    /// 소속은 세션 층이 정한다(세션 cwd가 워크스페이스 폴더 아래인지).
+    static func backgroundSessions(workspace: String, host: String?) -> [AgentPickerSession] {
+        let key = host.map { workspace + "@" + $0 } ?? workspace
+        guard case .success(let data) = runSync(["ls", "--ws", key, "--background", "--json"]),
+              let listing = try? JSONDecoder().decode(SessionListing.self, from: data) else { return [] }
+        return listing.sessions.filter { $0.pane == nil }.compactMap(\.pickerSession)
+    }
+
+    /// 배치 데이터가 없는 워크스페이스용: 폴더 아래에서 패널 없이 도는 세션.
     static func backgroundSessions(underFolder folder: String, host: String? = nil) -> [AgentPickerSession] {
         var args = ["ls", "--json"]
         if let host { args += ["--host", host] }

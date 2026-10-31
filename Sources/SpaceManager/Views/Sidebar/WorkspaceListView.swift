@@ -7,6 +7,7 @@ struct WorkspaceListView: View {
     var isCompact = false
     @ObservedObject private var activity = RecentActivityScanner.shared
     @ObservedObject private var peers = PeerDirectory.shared
+    @ObservedObject private var layouts = LayoutDirectory.shared
     @State private var draggingWorkspace: Workspace?
 
     /// 이 워크스페이스(루트 및 하위 경로)에서의 마지막 Claude 대화 시각
@@ -126,8 +127,27 @@ struct WorkspaceListView: View {
                         }
                     }
 
-                    // 선택된 워크스페이스의 탭 폴더링 — 탭이 2개 이상일 때만 하위 목록 표시
-                    if appState.selectedWorkspace?.id == workspace.id && appState.sessions.count > 1 {
+                    // 선택된 워크스페이스의 탭 폴더링 — 탭이 2개 이상일 때만 하위 목록 표시.
+                    // 배치 데이터가 있으면 그 탭(세션 층의 원본)을, 없으면 지금까지의 tmux 탭을 보인다.
+                    if appState.selectedWorkspace?.id == workspace.id,
+                       let layout = appState.layout(for: workspace, directory: layouts), layout.tabs.count > 1 {
+                        VStack(spacing: 0) {
+                            ForEach(layout.tabs) { tab in
+                                LayoutTabRow(
+                                    name: tab.name,
+                                    isSelected: appState.displayedTab(of: layout)?.id == tab.id,
+                                    attention: appState.layoutRollup(tab: tab, in: layout, directory: peers),
+                                    onSelect: { appState.selectLayoutTab(tab.id, in: layout) }
+                                )
+                            }
+                        }
+                        .frame(width: (isCompact ? Sidebar.compactWidth : Sidebar.workspaceWidth) - 12)
+                        .opacity(isCompact ? 0 : 1)
+                        .clipped()
+                        .allowsHitTesting(!isCompact)
+                        .accessibilityHidden(isCompact)
+                    } else if appState.selectedWorkspace?.id == workspace.id && appState.sessions.count > 1
+                                && appState.layout(for: workspace, directory: layouts) == nil {
                         VStack(spacing: 0) {
                             ForEach(appState.sessions) { session in
                                 WorkspaceTabRow(
@@ -318,6 +338,44 @@ struct WorkspaceActivityDot: View {
         let minutes = Int(-lastConversation.timeIntervalSinceNow) / 60
         let when = minutes < 1 ? "방금" : minutes < 60 ? "\(minutes)분 전" : "\(minutes / 60)시간 전"
         return isGenerating ? "에이전트 응답 생성 중 · 마지막 대화 \(when)" : "마지막 대화 \(when)"
+    }
+}
+
+/// 배치 데이터의 탭 행. 모양은 아래 WorkspaceTabRow와 같고, 닫기는 없다(탭은 세션 층 명령으로 닫는다).
+struct LayoutTabRow: View {
+    let name: String
+    let isSelected: Bool
+    var attention: AgentAttention?
+    let onSelect: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(name)
+                .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
+                .foregroundColor(Color(isSelected ? Chrome.textPrimary : Chrome.textSecondary))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if let attention, attention >= .working {
+                AgentStateMark(attention: attention)
+                    .help(AgentStateMark.spokenName(attention))
+            }
+        }
+        .frame(height: Sidebar.tabRowHeight)
+        .padding(.leading, Sidebar.listInset + Sidebar.iconFrame + 6)
+        .padding(.trailing, 4 + 14)
+        .background {
+            if isHovering && !isSelected {
+                RoundedRectangle(cornerRadius: Sidebar.listCornerRadius, style: .continuous)
+                    .fill(Color(Chrome.hover))
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .onTapGesture(perform: onSelect)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(name)
+        .accessibilityValue(isSelected ? "Selected" : "")
     }
 }
 

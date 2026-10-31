@@ -66,24 +66,31 @@ private struct PaneCard: View {
     let onFocus: () -> Void
     let onClose: (() -> Void)?
     let onZoom: () -> Void
+    /// 패널이 하나뿐인 탭은 이름표 없이 그린다 — 지금까지의 터미널 카드와 똑같다.
+    var showsLegend = true
+    /// 이름표 오른쪽 끝의 글자 버튼 하나(예: tmux에 남은 에이전트 옮기기).
+    var legendAction: LegendAction?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PaneLegend(badge: badge, isFocused: isFocused, isZoomed: isZoomed)
-                .padding(.leading, 9)
-                .padding(.trailing, 12)
-                .frame(height: 24)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .contextMenu {
-                    Button(isZoomed ? "확대 끝내기" : "이 패널 확대", action: onZoom)
-                    if let onClose {
-                        Divider()
-                        Button("패널 닫기", action: onClose)
+            if showsLegend {
+                PaneLegend(badge: badge, isFocused: isFocused, isZoomed: isZoomed, action: legendAction)
+                    .padding(.leading, 9)
+                    .padding(.trailing, 12)
+                    .frame(height: 24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .contextMenu {
+                        Button(isZoomed ? "확대 끝내기" : "이 패널 확대", action: onZoom)
+                        if let onClose {
+                            Divider()
+                            Button("패널 닫기", action: onClose)
+                        }
                     }
-                }
+            }
             AgentTerminalView(session: session)
-                .padding(EdgeInsets(top: 0, leading: 12, bottom: 4, trailing: 4))
+                .padding(showsLegend ? EdgeInsets(top: 0, leading: 12, bottom: 4, trailing: 4)
+                                     : EdgeInsets(top: 6, leading: 12, bottom: 4, trailing: 4))
         }
         .background(Color(Chrome.pane))
         .clipShape(RoundedRectangle(cornerRadius: TabPanesView.radius, style: .continuous))
@@ -120,10 +127,18 @@ private struct PickerCard<Content: View>: View {
 
 /// 이름표: 상태 표시, 이름, 막힌 이유, 경과 시간.
 /// 포커스된 패널만 이름이 진하다 — 강조색은 상태 표시와 포커스 테두리에만 쓴다.
+struct LegendAction {
+    let title: String
+    let isEnabled: Bool
+    var help: String?
+    let run: () -> Void
+}
+
 private struct PaneLegend: View {
     let badge: PaneBadge
     let isFocused: Bool
     let isZoomed: Bool
+    var action: LegendAction?
 
     static let height: CGFloat = 14
 
@@ -150,6 +165,18 @@ private struct PaneLegend: View {
                 Text("확대")
                     .font(.system(size: 11))
                     .foregroundStyle(Color(Chrome.textTertiary))
+            }
+            if let action {
+                Spacer(minLength: 8)
+                Button(action: action.run) {
+                    Text(action.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color(action.isEnabled ? Chrome.textSecondary : Chrome.textTertiary))
+                        .underline(action.isEnabled)
+                }
+                .buttonStyle(.plain)
+                .disabled(!action.isEnabled)
+                .help(action.help ?? action.title)
             }
         }
         .lineLimit(1)
@@ -227,5 +254,154 @@ private struct PaneFocusMonitor: NSViewRepresentable {
         deinit {
             if let monitor { NSEvent.removeMonitor(monitor) }
         }
+    }
+}
+
+
+// MARK: - 배치 데이터로 그리는 탭
+
+/// 세션 층의 배치(`WorkspaceLayout`) 탭 하나. 모양은 위의 카드 그대로이고, 다른 점은 원본이 파일이라는 것뿐이다.
+/// 끌기는 화면에서만 미리 보이고 놓을 때 한 번 명령을 보낸다. 고르는 상자 자리는 데이터에 쓰기 전의 미리보기다.
+struct LayoutTabView: View {
+    @EnvironmentObject private var appState: AppState
+    let layout: WorkspaceLayout
+    let tab: WorkspaceLayout.Tab
+    let workspace: Workspace
+    @ObservedObject var interaction: LayoutInteraction
+    @ObservedObject var directory: PeerDirectory
+    let picker: (LayoutInteraction.Pending) -> AnyView
+    @State private var drag: (path: [Int], sizes: [Double])?
+
+    private var workspaceKey: String { LayoutDirectory.key(workspace: layout.workspace, host: layout.host) }
+
+    /// 지금 그릴 트리: 파일 → 놓은 직후의 모양 → 끄는 중의 모양 → 상자 자리.
+    private var root: LayoutNode {
+        var node = tab.root
+        if let held = interaction.rootOverride, held.key == LayoutInteraction.tabKey(layout, tab.id), layout.version < held.until {
+            node = held.root
+        }
+        if let drag { node = node.resizing(path: drag.path, sizes: drag.sizes) }
+        if let pending { node = node.inserting(pending.paneID, beside: pending.beside, dir: pending.dir) }
+        return node
+    }
+
+    private var pending: LayoutInteraction.Pending? {
+        guard let pending = interaction.pending, pending.workspaceKey == workspaceKey, pending.tabID == tab.id else { return nil }
+        return pending
+    }
+
+    private var focused: String? {
+        if let pending { return pending.paneID }
+        if let override = interaction.focusOverride, override.key == workspaceKey, tab.root.paneIDs.contains(override.pane) {
+            return override.pane
+        }
+        return tab.focus
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let bounds = CGRect(origin: .zero, size: proxy.size)
+            let tree = root
+            let zoomed = pending == nil ? tab.zoom.flatMap { tree.paneIDs.contains($0) ? $0 : nil } : nil
+            let shown: LayoutNode = zoomed.map { .pane(id: $0, size: 1) } ?? tree
+            let frames = shown.frames(in: bounds, gap: TabPanesView.gap)
+            let boundaries = zoomed == nil ? tree.boundaries(in: bounds, gap: TabPanesView.gap) : []
+            let multiple = tree.paneIDs.count > 1
+            ZStack(alignment: .topLeading) {
+                ForEach(shown.paneIDs, id: \.self) { id in
+                    if let frame = frames[id] {
+                        paneView(id, multiple: multiple, zoomed: zoomed != nil)
+                            .frame(width: frame.width, height: frame.height)
+                            .offset(x: frame.minX, y: frame.minY)
+                    }
+                }
+                ForEach(Array(boundaries.enumerated()), id: \.offset) { _, boundary in
+                    LayoutGapHandle(boundary: boundary) { point in
+                        drag = (boundary.path, boundary.sizes(at: point, gap: TabPanesView.gap))
+                    } onEnd: {
+                        if let drag { appState.commitResize(boundary, sizes: drag.sizes, tab: tab, in: layout) }
+                        drag = nil
+                    }
+                }
+            }
+            .coordinateSpace(name: TabPanesView.space)
+        }
+    }
+
+    @ViewBuilder
+    private func paneView(_ id: String, multiple: Bool, zoomed: Bool) -> some View {
+        if let pending, pending.paneID == id {
+            PickerCard(isFocused: true) { picker(pending) }
+        } else {
+            let session = appState.layoutTerminals.session(for: id, in: layout, workspace: workspace)
+            PaneCard(session: session,
+                     badge: badge(for: id, session: session),
+                     isFocused: multiple && focused == id,
+                     isZoomed: zoomed,
+                     onFocus: { if focused != id { appState.focusLayoutPane(id, in: layout) } },
+                     onClose: multiple ? { appState.closeLayoutPane(id, in: layout) } : nil,
+                     onZoom: { appState.zoomLayoutPane(id, in: layout) },
+                     showsLegend: multiple,
+                     legendAction: migrateAction(for: id, session: session))
+        }
+    }
+
+    /// 아직 tmux에 남은 에이전트를 sm 세션으로 옮기는 버튼. 쉬는 중일 때만 켠다 — 일하는 중에 옮기면
+    /// 그 턴이 끊긴다. 하네스 lane(dori-*)은 등록부 주소를 하네스가 먼저 바꿔야 해서 하네스가 옮긴다.
+    private func migrateAction(for id: String, session: TerminalSession) -> LegendAction? {
+        guard layout.panes[id]?.tmuxPane != nil, let name = layout.panes[id]?.session else { return nil }
+        if name.hasPrefix("dori-") {
+            return LegendAction(title: "하네스가 옮김", isEnabled: false,
+                                help: "하네스가 등록부 주소를 바꾼 뒤 옮긴다", run: {})
+        }
+        let idle = agent(for: id).map { $0.state == .idle } ?? false
+        return LegendAction(title: "sm으로 옮기기", isEnabled: idle,
+                            help: idle ? "같은 대화를 sm 세션으로 옮긴다" : "쉬는 상태가 되면 옮길 수 있다",
+                            run: { appState.migrateToSessionLayer(name, host: layout.host) })
+    }
+
+    /// 이 패널의 에이전트 — 배치가 말하는 세션 이름(이름이 곧 세션이자 peer 이름)으로 찾는다.
+    private func agent(for id: String) -> PeerAgent? {
+        guard let name = layout.panes[id]?.session else { return nil }
+        return directory.agents.first { $0.name == name && $0.host == layout.host }
+    }
+
+    private func badge(for id: String, session: TerminalSession) -> PaneBadge {
+        let title = layout.panes[id]?.session ?? session.name
+        var badge = agent(for: id)
+            .map { PaneBadge(agent: $0, attention: directory.attention(of: $0), title: title) }
+            ?? PaneBadge(title: title)
+        // 아직 tmux에 남은 에이전트. 쉬는 상태가 되면 세션 층이 sm으로 옮길 수 있다.
+        if layout.panes[id]?.tmuxPane != nil, badge.detail == nil { badge.detail = "tmux" }
+        return badge
+    }
+}
+
+/// 배치 경계선의 손잡이(카드 사이 틈 전체). 끄는 동안은 화면만, 놓을 때 한 번.
+private struct LayoutGapHandle: View {
+    let boundary: LayoutBoundary
+    let onChange: (CGPoint) -> Void
+    let onEnd: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .frame(width: boundary.line.width, height: boundary.line.height)
+            .offset(x: boundary.line.minX, y: boundary.line.minY)
+            .onHover { hovering in
+                guard hovering != isHovering else { return }
+                isHovering = hovering
+                if hovering {
+                    (boundary.dir == .row ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .named(TabPanesView.space))
+                    .onChanged { onChange($0.location) }
+                    .onEnded { _ in onEnd() }
+            )
     }
 }

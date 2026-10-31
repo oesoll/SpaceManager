@@ -6,7 +6,8 @@ struct TabSurfaceView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        TabSurfaceContent(panes: appState.panes, directory: .shared)
+        TabSurfaceContent(panes: appState.panes, directory: .shared, layouts: .shared,
+                          interaction: appState.layoutInteraction)
     }
 }
 
@@ -14,6 +15,21 @@ private struct TabSurfaceContent: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject var panes: PaneStore
     @ObservedObject var directory: PeerDirectory
+    @ObservedObject var layouts: LayoutDirectory
+    @ObservedObject var interaction: LayoutInteraction
+
+    /// 배치 데이터가 있는 워크스페이스면 그것을 그린다(tmux 탭 없이).
+    private var layoutTab: (WorkspaceLayout, WorkspaceLayout.Tab, Workspace)? {
+        guard appState.windowKind == .workspace, let workspace = appState.selectedWorkspace,
+              let layout = layouts.layouts[appState.layoutKey(for: workspace)], let tab = appState.displayedTab(of: layout) else { return nil }
+        return (layout, tab, workspace)
+    }
+
+    /// 이 창이 따라갈 원격 배치(선택된 원격 워크스페이스 하나).
+    private var remoteLayoutKeys: Set<String> {
+        guard appState.windowKind == .workspace, let workspace = appState.selectedWorkspace, workspace.isRemote else { return [] }
+        return [appState.layoutKey(for: workspace)]
+    }
 
     private var group: PaneGroup? {
         guard appState.windowKind == .workspace, let tab = appState.selectedSession,
@@ -23,7 +39,13 @@ private struct TabSurfaceContent: View {
 
     var body: some View {
         Group {
-            if let group {
+            if let (layout, tab, workspace) = layoutTab {
+                LayoutTabView(layout: layout, tab: tab, workspace: workspace, interaction: interaction,
+                              directory: directory) { pending in
+                    AnyView(layoutPicker(pending, layout: layout))
+                }
+                .id(LayoutInteraction.tabKey(layout, tab.id))
+            } else if let group {
                 SplitTab(group: group, directory: directory)
             } else if appState.windowKind == .workspace {
                 // 작업 창은 카드 라운딩이 없어 글자가 세로선에 붙는다. 셀 한 칸 남짓 들인다.
@@ -42,10 +64,21 @@ private struct TabSurfaceContent: View {
         .onAppear {
             guard appState.windowKind == .workspace else { return }
             directory.start(owner: appState.windowStateId)
+            layouts.start(owner: appState.windowStateId)
+            layouts.setRemote(remoteLayoutKeys, owner: appState.windowStateId)
         }
         .onDisappear {
             guard appState.windowKind == .workspace else { return }
             directory.stop(owner: appState.windowStateId)
+            layouts.stop(owner: appState.windowStateId)
+        }
+        .onChange(of: remoteLayoutKeys) { _, keys in
+            layouts.setRemote(keys, owner: appState.windowStateId)
+        }
+        .onChange(of: layouts.layouts) { _, _ in
+            appState.pruneLayoutTerminals()
+            // 파일이 따라잡았으면 화면 쪽 임시 상태를 걷는다.
+            if let layout = layoutTab?.0 { appState.settleLayoutOverrides(layout) }
         }
         .onChange(of: viewingKey) { _, key in
             directory.setViewing(key, owner: appState.windowStateId)
@@ -57,6 +90,27 @@ private struct TabSurfaceContent: View {
         guard appState.windowKind == .workspace, let tab = appState.selectedSession else { return nil }
         let pane = panes.group(for: tab)?.focusedSession ?? tab
         return directory.agent(for: pane, includeStale: true)?.key
+    }
+}
+
+extension TabSurfaceContent {
+    /// 배치 탭의 고르는 상자. 확정하면 세션 층의 split 하나로 배치와 세션이 함께 생긴다.
+    @ViewBuilder
+    fileprivate func layoutPicker(_ pending: LayoutInteraction.Pending, layout: WorkspaceLayout) -> some View {
+        if let context = interaction.pendingContext {
+            let taken = Set(directory.agents.map(\.name)).union(context.backgroundSessions.map(\.name))
+                .union(layout.panes.values.compactMap(\.session))
+            AgentPickerView(
+                workspace: appState.selectedWorkspace?.name ?? layout.workspace,
+                context: context,
+                initial: AgentPickerDefaults.load(fallback: .init(engine: .claude,
+                                                                  modelID: context.claudeModels.first?.id ?? "",
+                                                                  effort: .high)),
+                suggestName: { appState.suggestedAgentName(for: $0, taken: taken) },
+                onOpen: { appState.launchInLayout($0, layout: layout) },
+                onBring: { appState.bringIntoLayout($0, layout: layout) },
+                onCancel: { appState.cancelLayoutSplit() })
+        }
     }
 }
 

@@ -46,6 +46,10 @@ final class PaneCaptureTests: XCTestCase {
         func shell(_ id: UUID) -> TerminalSession {
             TerminalSession(id: id, kind: .shell, name: "zsh", workingDirectory: flatWorkspace.rootPath)
         }
+        if env["SM_CAPTURE_SCENE"] == "layout" {
+            try captureLayout(appState: appState, workspace: flatWorkspace, appearance: appearance, home: home)
+            return
+        }
         if env["SM_CAPTURE_SCENE"] == "picker" {
             try capturePicker(appState: appState, tab: tab, shell: shell, appearance: appearance, home: home)
             return
@@ -146,6 +150,73 @@ final class PaneCaptureTests: XCTestCase {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try png.write(to: folder.appendingPathComponent("panes-\(appearance).png"))
         for id in ids { group.session(for: id)?.cleanup(force: true) }
+    }
+
+    /// 세션 층의 배치 데이터를 그대로 그린다: 탭 둘, main은 왼쪽 하나와 오른쪽 위아래 둘(n-ary 트리).
+    /// 오른쪽 아래는 아직 tmux에 남아 쉬는 에이전트라 "sm으로 옮기기"가 켜져 있다.
+    @MainActor
+    private func captureLayout(appState: AppState, workspace: Workspace, appearance: String, home: URL) throws {
+        let host = PeerDirectory.shared.localHostName
+        let folder = home.appendingPathComponent(".smux/state/sm/workspaces")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let json = """
+        {"schema": 1, "workspace": "\(workspace.effectiveTmuxSessionName)", "host": "\(host)", "cwd": "\(workspace.rootPath)",
+         "version": 3, "active_tab": "t-main",
+         "tabs": [
+          {"id": "t-main", "name": "main", "focus": "p-a", "zoom": null,
+           "root": {"dir": "row", "children": [{"pane": "p-a", "size": 0.55},
+                    {"dir": "col", "size": 0.45, "children": [{"pane": "p-b", "size": 0.5}, {"pane": "p-c", "size": 0.5}]}]}},
+          {"id": "t-eng", "name": "engine", "focus": "p-d", "zoom": null,
+           "root": {"dir": "row", "children": [{"pane": "p-d", "size": 0.34}, {"pane": "p-e", "size": 0.33}, {"pane": "p-f", "size": 0.33}]}}
+         ],
+         "panes": {"p-a": {"session": "flat-frontend", "shell": false}, "p-b": {"session": "flat-qa", "shell": false},
+                   "p-c": {"session": "flat-rev", "shell": false, "tmux_pane": "%173"},
+                   "p-d": {"session": "flat-engine", "shell": false}, "p-e": {"session": "flat-sol", "shell": false},
+                   "p-f": {"session": null, "shell": true}}}
+        """
+        try json.write(to: folder.appendingPathComponent("flat.json"), atomically: true, encoding: .utf8)
+
+        // 세션 층 없이 찍는다: 패널마다 셸을 띄우고 에이전트 화면은 텍스트로 흉내 낸다.
+        appState.layoutTerminals.makeSession = { paneID, pane, _, workspace in
+            TerminalSession(kind: .shell, name: pane?.session ?? "zsh", workingDirectory: workspace.rootPath)
+        }
+        let now = Date()
+        func row(_ name: String, _ state: PeerState, since: Date, reason: String? = nil) -> PeerAgent {
+            PeerAgent(id: "claude:" + name, name: name, host: host, target: "%x", state: state, reason: reason, since: since)
+        }
+        PeerDirectory.shared.apply(PeerListing(peers: [
+            row("flat-frontend", .working, since: now), row("flat-qa", .blocked, since: now.addingTimeInterval(-185), reason: "permission"),
+            row("flat-rev", .idle, since: now.addingTimeInterval(-600)), row("flat-engine", .working, since: now),
+        ]), now: now)
+
+        let window = try openWindow(CaptureLayout(appState: appState), dark: appearance == "dark")
+        defer { window.orderOut(nil) }
+        LayoutDirectory.shared.reloadLocal()
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        let layout = try XCTUnwrap(appState.selectedLayout, "layout file was not picked up")
+        let screens = home.appendingPathComponent("screens")
+        try FileManager.default.createDirectory(at: screens, withIntermediateDirectories: true)
+        let texts = [
+            "p-a": "\u{1b}[1m⏺\u{1b}[0m Update(src/components/PriceRow.tsx)\n  ⎿  Updated with 3 additions and 1 removal\n\n\u{1b}[38;5;210m✻\u{1b}[0m Running tests… \u{1b}[2m(38s · esc to interrupt)\u{1b}[0m\n",
+            "p-b": "\u{1b}[1m⏺\u{1b}[0m 결제 흐름 E2E를 돌려 보겠습니다.\n\n Bash command\n   pnpm playwright test checkout.spec.ts\n\n Do you want to proceed?\n \u{1b}[38;5;210m❯ 1. Yes\u{1b}[0m\n   2. No\n",
+            "p-c": "\u{1b}[1m⏺\u{1b}[0m 리뷰를 마쳤습니다. 반올림이 두 군데에서 다릅니다.\n\n\u{1b}[2m>\u{1b}[0m\n",
+        ]
+        for (pane, text) in texts {
+            let file = screens.appendingPathComponent(pane + ".txt")
+            try text.write(to: file, atomically: true, encoding: .utf8)
+            let terminal = appState.layoutTerminals.session(for: pane, in: layout, workspace: workspace).terminalView
+            terminal?.sendText("clear; cat '\(file.path)'; sleep 600")
+            terminal?.pressReturn()
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(2.0))
+        let image = try capture(window)
+        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+        let out = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/window-capture")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        try png.write(to: out.appendingPathComponent("layout-\(appearance).png"))
+        for session in appState.layoutTerminals.all { session.cleanup(force: true) }
     }
 
     /// 고르는 상자 시안: 왼쪽은 일하는 에이전트, 오른쪽은 ⌘D로 막 생긴 자리와 그 안의 상자.

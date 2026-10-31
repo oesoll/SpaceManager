@@ -5,6 +5,10 @@ extension AppState {
     /// 지금 탭의 포커스된 패널을 나누고, 새 자리에 무엇을 열지 고르는 상자를 띄운다.
     /// tmux는 새 패널에 빈 명령줄을 띄웠지만, sm에서는 패널이 곧 에이전트다(SEOL 10/31).
     func splitPane(_ axis: PaneAxis) {
+        if let layout = selectedLayout {
+            beginLayoutSplit(axis, in: layout)
+            return
+        }
         guard windowKind == .workspace, let tab = selectedSession, let workspace = selectedWorkspace else { return }
         let group = panes.ensureGroup(for: tab)
         let id = group.splitForPicker(axis)
@@ -92,15 +96,42 @@ extension AppState {
         selectedSession.flatMap { panes.group(for: $0) }
     }
 
+    /// 지금 탭에 패널이 둘 이상인가(이동·확대 메뉴를 켤지).
+    var hasMultiplePanes: Bool {
+        if let layout = selectedLayout, let tab = displayedTab(of: layout) { return tab.root.paneIDs.count > 1 }
+        return selectedPaneGroup?.isSplit == true
+    }
+
+    /// 배치 탭에서 지금 포커스된 패널(방금 누른 것이 파일보다 앞선다).
+    var focusedLayoutPane: String? {
+        guard let layout = selectedLayout, let tab = displayedTab(of: layout) else { return nil }
+        if let held = layoutInteraction.focusOverride, held.key == layoutKey(for: selectedWorkspace!),
+           tab.root.paneIDs.contains(held.pane) { return held.pane }
+        return tab.focus ?? tab.root.paneIDs.first
+    }
+
     func cyclePane(forward: Bool) {
+        if let layout = selectedLayout, let ids = displayedTab(of: layout)?.root.paneIDs, ids.count > 1,
+           let current = focusedLayoutPane, let index = ids.firstIndex(of: current) {
+            focusLayoutPane(ids[(index + (forward ? 1 : ids.count - 1)) % ids.count], in: layout)
+            return
+        }
         selectedPaneGroup?.cycleFocus(forward: forward)
     }
 
     func toggleZoomPane() {
+        if let layout = selectedLayout, let pane = focusedLayoutPane {
+            zoomLayoutPane(pane, in: layout)
+            return
+        }
         selectedPaneGroup?.toggleZoom()
     }
 
     func closeFocusedPane() {
+        if let layout = selectedLayout, let pane = focusedLayoutPane, hasMultiplePanes {
+            closeLayoutPane(pane, in: layout)
+            return
+        }
         guard let group = selectedPaneGroup else { return }
         group.close(group.focused)
     }
@@ -108,6 +139,10 @@ extension AppState {
     /// SEOL을 기다리는 다음 패널로 간다(막힘 > 오류 > 안 본 끝남, 같은 급이면 오래 기다린 순).
     /// 지금 창의 열린 탭과 그 패널 안에서만 찾는다 — 다른 워크스페이스의 탭은 사이드바 표시로 보인다.
     func focusNextWaitingPane(directory: PeerDirectory = .shared) {
+        if let layout = selectedLayout, let workspace = selectedWorkspace {
+            focusNextWaitingLayoutPane(layout, workspace: workspace, directory: directory)
+            return
+        }
         var candidates: [(tab: TerminalSession, pane: UUID, attention: AgentAttention, since: Date)] = []
         for tab in sessions {
             for pane in paneSessions(of: tab) {
@@ -173,6 +208,9 @@ extension AppState {
     ///
     /// tmux 매칭은 sm이 배치의 원본이 될 때까지의 다리다. holder로 옮기면 이 갈래를 지운다.
     func agentRollup(for workspace: Workspace, directory: PeerDirectory) -> AgentAttention? {
+        if let layout = layout(for: workspace) {
+            return layout.tabs.compactMap { layoutRollup(tab: $0, in: layout, directory: directory) }.max()
+        }
         let fromPanes = sessions(for: workspace).compactMap { agentRollup(forTab: $0, directory: directory) }
         let host = workspace.isRemote ? directory.peerHost(forAlias: workspace.remoteHost ?? "") : directory.localHostName
         let session = workspace.effectiveTmuxSessionName

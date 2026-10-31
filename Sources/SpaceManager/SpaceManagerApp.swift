@@ -138,19 +138,19 @@ struct AppCommands: Commands {
                 appState?.cyclePane(forward: true)
             }
             .keyboardShortcut("]", modifiers: .command)
-            .disabled(appState?.selectedPaneGroup?.isSplit != true)
+            .disabled(appState?.hasMultiplePanes != true)
 
             Button("이전 패널") {
                 appState?.cyclePane(forward: false)
             }
             .keyboardShortcut("[", modifiers: .command)
-            .disabled(appState?.selectedPaneGroup?.isSplit != true)
+            .disabled(appState?.hasMultiplePanes != true)
 
             Button("패널 확대") {
                 appState?.toggleZoomPane()
             }
             .keyboardShortcut(.return, modifiers: [.command, .shift])
-            .disabled(appState?.selectedPaneGroup?.isSplit != true)
+            .disabled(appState?.hasMultiplePanes != true)
 
             Button("기다리는 패널로") {
                 appState?.focusNextWaitingPane()

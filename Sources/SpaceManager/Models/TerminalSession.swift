@@ -31,6 +31,9 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     let quickConfiguration: QuickSessionConfiguration
     /// 셸 패널이 무엇에 붙는가(로그인 셸 또는 peer holder의 에이전트). 붙이는 방법은 TerminalAttachment에만 있다.
     let attachment: TerminalAttachment
+    /// 배치 데이터의 패널이면 그 id(`p-…`)와 워크스페이스. 패널 안 셸이 `sm split`처럼 자기 자리를 알게
+    /// `SM_PANE_ID`·`SM_WORKSPACE`로 넘긴다(세션 층 계약). 없으면 탭 id를 `SM_PANE_ID`로 쓴다.
+    var layoutPane: (id: String, workspace: String)?
     private let initialName: String
 
     /// 지금 화면에 붙은 터미널. libghostty 표면이 PTY와 자식 프로세스를 직접 쥔다.
@@ -142,7 +145,10 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         var env = base
         // peer가 이 터미널의 에이전트를 sm 패널(`sm:<UUID>`)로 찾는 고리. tmux 탭에는 넣지 않는다 —
         // 새로 뜨는 tmux 서버가 전역 환경으로 물려받아 모든 패널이 이 탭을 자기 것이라 주장한다.
-        if kind == .shell { env["SM_PANE_ID"] = id.uuidString }
+        if kind == .shell {
+            env["SM_PANE_ID"] = layoutPane?.id ?? id.uuidString
+            if let workspace = layoutPane?.workspace { env["SM_WORKSPACE"] = workspace }
+        }
         if kind == .quick {
             env = QuickSessionPolicy.applyingEnvironment(env, launch: quickLaunch ?? .blank,
                                                          configuration: quickConfiguration)
