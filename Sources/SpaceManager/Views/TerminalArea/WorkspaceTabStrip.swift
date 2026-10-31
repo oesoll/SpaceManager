@@ -99,8 +99,12 @@ private struct TabChip: View {
         }
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .onTapGesture(count: 2) { rename() }
+        // 한 번 누르면 바로 고른다. 두 번 누르기와 한 번 누르기를 같은 자리에 차례로 걸면 SwiftUI는 한 번
+        // 누른 것을 두 번째 클릭이 오는지 더블클릭 간격만큼 기다렸다가 처리해, 탭을 누를 때마다 늦었다
+        // (SEOL 10/31 "완전히 로드된 이후에도 딜레이"). 두 번 누르기는 나란히(simultaneous) 받는다 — 첫
+        // 클릭에 그 탭이 골라진 뒤 이름 바꾸기가 뜬다.
         .onTapGesture(perform: onSelect)
+        .simultaneousGesture(TapGesture(count: 2).onEnded { rename() })
         .contextMenu {
             if onRename != nil { Button("이름 바꾸기…", action: rename) }
             if let onClose {
