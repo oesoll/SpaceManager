@@ -22,6 +22,11 @@ struct TerminalAreaView: View {
             }
             // 카드 바탕·테두리는 TabSurfaceView가 그린다 — 탭을 나누면 카드가 여럿이 된다.
             TabSurfaceView()
+            if appState.windowKind == .workspace {
+                // 탭은 tmux 상태줄이 있던 자리(아래 왼쪽)에서 오간다.
+                TabStripBar(layouts: .shared, peers: .shared, interaction: appState.layoutInteraction)
+                    .padding(.top, 6)
+            }
         }
     }
 }

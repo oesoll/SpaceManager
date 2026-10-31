@@ -78,12 +78,15 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
         if let surface, let palette = GhosttyRuntime.shared.config(for: palette) {
             ghostty_surface_update_config(surface, palette)
         }
+        // 표면은 포커스된 채로 태어난다. 알려 주지 않으면 포커스 없는 패널마다 깜박이는 커서를 그린다(SEOL 10/31).
+        if let surface { ghostty_surface_set_focus(surface, false) }
         updateTrackingAreas()
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     deinit {
+        keyObservers.forEach(NotificationCenter.default.removeObserver)
         if let surface { ghostty_surface_free(surface) }
     }
 
@@ -219,17 +222,35 @@ final class GhosttyTerminalView: NSView, NSTextInputClient {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        keyObservers.forEach(NotificationCenter.default.removeObserver)
+        keyObservers = []
+        if let window {
+            for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+                keyObservers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
+                    [weak self] _ in self?.syncFocus()
+                })
+            }
+        }
         guard let surface else { return }
         // 창에서 떨어진 표면은 그리지 않는다 — 보이지 않는 탭이 GPU를 쓰지 않게.
         ghostty_surface_set_occlusion(surface, window != nil)
         if window != nil { viewDidChangeBackingProperties() }
+        syncFocus()
+    }
+
+    private var keyObservers: [NSObjectProtocol] = []
+
+    /// 포커스는 "이 창이 앞에 있고, 이 터미널이 키를 받는다"일 때만. 아니면 커서를 그리지 않는다.
+    private func syncFocus() {
+        guard let surface else { return }
+        ghostty_surface_set_focus(surface, window?.isKeyWindow == true && window?.firstResponder === self)
     }
 
     // MARK: - 포커스
 
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
-        if result, let surface { ghostty_surface_set_focus(surface, true) }
+        if result, let surface { ghostty_surface_set_focus(surface, window?.isKeyWindow ?? true) }
         return result
     }
 

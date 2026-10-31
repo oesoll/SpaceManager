@@ -18,6 +18,8 @@ final class LayoutInteraction: ObservableObject {
     }
 
     @Published var pending: Pending?
+    /// 새 탭을 고르는 중인 워크스페이스(키). 탭 전체가 고르는 상자가 된다.
+    @Published var pendingTab: String?
     var pendingContext: AgentPickerContext?
     /// 방금 누른 패널. 명령이 파일에 닿기 전까지 이것을 포커스로 그린다.
     @Published var focusOverride: (key: String, pane: String)?
@@ -207,7 +209,100 @@ extension AppState {
 
     func cancelLayoutSplit() {
         layoutInteraction.pending = nil
+        layoutInteraction.pendingTab = nil
         layoutInteraction.pendingContext = nil
+    }
+
+    // MARK: - 탭
+
+    /// 새 탭(+ / ⌘T): 탭 자리를 만들고 고르는 상자를 띄운다. 고르기 전에는 데이터에 쓰지 않는다.
+    func beginLayoutNewTab(in layout: WorkspaceLayout) {
+        guard let workspace = selectedWorkspace else { return }
+        layoutInteraction.pending = nil
+        let context = AgentPickerContext(claudeModels: AgentModelCatalog.claudeFallback(), codexModels: AgentModelCatalog.codex())
+        layoutInteraction.pendingContext = context
+        layoutInteraction.pendingTab = LayoutDirectory.key(workspace: layout.workspace, host: layout.host)
+        loadPickerLists(context, workspace: layout.workspace, host: sessionHost(for: workspace))
+    }
+
+    private func loadPickerLists(_ context: AgentPickerContext, workspace: String, host: String?) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let claude = AgentModelCatalog.claude()
+            let sessions = SessionLayer.backgroundSessions(workspace: workspace, host: host)
+            DispatchQueue.main.async {
+                if !claude.isEmpty { context.claudeModels = claude }
+                context.backgroundSessions = sessions
+            }
+        }
+    }
+
+    /// 새 탭 상자에서 "열기": 탭과 에이전트를 한 번에(`tab new --spawn`). 실패하면 세션 층이 탭도 지운다.
+    func launchInNewTab(_ spec: AgentLaunchSpec, layout: WorkspaceLayout) {
+        guard let context = layoutInteraction.pendingContext else { return }
+        context.isLaunching = true
+        context.error = nil
+        AgentPickerDefaults(engine: spec.engine, modelID: spec.modelID, effort: spec.effort).save()
+        let engineArgs = Array(SessionLayer.spawnArguments(spec, pane: nil, workingDirectory: layout.cwd).drop(while: { $0 != "--" }))
+        runLayoutCommand(["tab", "new", "--spawn", spec.name, "--kind", spec.engine.rawValue] + engineArgs, layout: layout) { result in
+            self.finishNewTab(result, layout: layout, context: context)
+        }
+    }
+
+    func bringIntoNewTab(_ session: AgentPickerSession, layout: WorkspaceLayout) {
+        guard let context = layoutInteraction.pendingContext else { return }
+        context.isLaunching = true
+        context.error = nil
+        runLayoutCommand(["tab", "new", "--attach", session.name], layout: layout) { result in
+            self.finishNewTab(result, layout: layout, context: context)
+        }
+    }
+
+    private func finishNewTab(_ result: Result<Data, SessionLayer.Failure>, layout: WorkspaceLayout, context: AgentPickerContext) {
+        switch result {
+        case .success(let data):
+            struct Reply: Decodable { let tab: String }
+            if let reply = try? JSONDecoder().decode(Reply.self, from: data) {
+                layoutInteraction.activeTabOverride = (LayoutDirectory.key(workspace: layout.workspace, host: layout.host), reply.tab)
+            }
+            cancelLayoutSplit()
+        case .failure(let failure):
+            context.isLaunching = false
+            context.error = failure.message
+        }
+    }
+
+    /// 탭을 닫는다. 그 안의 세션들은 뒤에서 계속 돈다.
+    func closeLayoutTab(_ tab: String, in layout: WorkspaceLayout) {
+        runLayoutCommand(["tab", "close", tab], layout: layout)
+    }
+
+    func renameLayoutTab(_ tab: String, to name: String, in layout: WorkspaceLayout) {
+        runLayoutCommand(["tab", "rename", tab, name], layout: layout)
+    }
+
+    func moveLayoutTab(_ tab: String, to index: Int, in layout: WorkspaceLayout) {
+        runLayoutCommand(["tab", "move", tab, String(index)], layout: layout)
+    }
+
+    /// ⌘1…9, ⌥⌘←→. 배치가 있으면 배치의 탭을, 없으면 지금까지의 탭을 오간다.
+    func selectTab(at index: Int) {
+        if let layout = selectedLayout {
+            guard layout.tabs.indices.contains(index) else { return }
+            selectLayoutTab(layout.tabs[index].id, in: layout)
+        } else if sessions.indices.contains(index) {
+            selectSession(sessions[index])
+        }
+    }
+
+    func stepTab(forward: Bool) {
+        guard let layout = selectedLayout else {
+            forward ? selectNextSession() : selectPreviousSession()
+            return
+        }
+        guard !layout.tabs.isEmpty, let current = displayedTab(of: layout),
+              let index = layout.tabs.firstIndex(where: { $0.id == current.id }) else { return }
+        let next = (index + (forward ? 1 : layout.tabs.count - 1)) % layout.tabs.count
+        selectLayoutTab(layout.tabs[next].id, in: layout)
     }
 
     /// 상자에서 "열기": 그 자리에 에이전트를 띄우는 split 하나. 세션 층이 배치와 세션을 함께 만든다.

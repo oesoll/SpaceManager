@@ -50,6 +50,9 @@ private struct TabSurfaceContent: View {
                     .clipShape(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous)
                         .strokeBorder(Color(Chrome.hairline), lineWidth: 1))
+            } else if let layout = layoutTab?.0, interaction.pendingTab == LayoutDirectory.key(workspace: layout.workspace, host: layout.host) {
+                // 새 탭: 탭 전체가 고르는 상자 하나다.
+                PickerCardStandalone { newTabPicker(layout: layout) }
             } else if let (layout, tab, workspace) = layoutTab {
                 LayoutTabView(layout: layout, tab: tab, workspace: workspace, interaction: interaction,
                               directory: directory) { pending in
@@ -109,6 +112,24 @@ private struct TabSurfaceContent: View {
 }
 
 extension TabSurfaceContent {
+    @ViewBuilder
+    fileprivate func newTabPicker(layout: WorkspaceLayout) -> some View {
+        if let context = interaction.pendingContext {
+            let taken = Set(directory.agents.map(\.name)).union(context.backgroundSessions.map(\.name))
+                .union(layout.panes.values.compactMap(\.session))
+            AgentPickerView(
+                workspace: appState.selectedWorkspace?.name ?? layout.workspace,
+                context: context,
+                initial: AgentPickerDefaults.load(fallback: .init(engine: .claude,
+                                                                  modelID: context.claudeModels.first?.id ?? "",
+                                                                  effort: .high)),
+                suggestName: { appState.suggestedAgentName(for: $0, taken: taken) },
+                onOpen: { appState.launchInNewTab($0, layout: layout) },
+                onBring: { appState.bringIntoNewTab($0, layout: layout) },
+                onCancel: { appState.cancelLayoutSplit() })
+        }
+    }
+
     /// 배치로 보이는 워크스페이스의 옛 탭(tmux attach 등)이 이미 붙어 있으면 뗀다. 같은 에이전트를
     /// tmux 보기 창과 sm 패널이 함께 붙들면 창 크기를 서로 바꾼다. tmux 세션 자체는 그대로 둔다.
     fileprivate func closeLegacyTerminalsIfLayoutShown() {
@@ -169,5 +190,84 @@ private struct SplitTab: View {
                 onBring: { appState.attachAgent(named: $0.name, host: appState.selectedWorkspace.flatMap(appState.sessionHost(for:)), inPane: id, group: group) },
                 onCancel: { group.cancelPicker(id) })
         }
+    }
+}
+
+
+/// 탭 막대를 채운다: 배치가 있으면 배치의 탭, 없으면 지금까지의 탭(tmux·셸).
+struct TabStripBar: View {
+    @EnvironmentObject private var appState: AppState
+    @ObservedObject var layouts: LayoutDirectory
+    @ObservedObject var peers: PeerDirectory
+    @ObservedObject var interaction: LayoutInteraction
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if let workspace = appState.selectedWorkspace, let layout = layouts.layouts[appState.layoutKey(for: workspace)] {
+                layoutStrip(layout)
+            } else {
+                legacyStrip
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func layoutStrip(_ layout: WorkspaceLayout) -> some View {
+        let key = LayoutDirectory.key(workspace: layout.workspace, host: layout.host)
+        let picking = interaction.pendingTab == key
+        let active = picking ? nil : appState.displayedTab(of: layout)?.id
+        var items = layout.tabs.map { tab in
+            WorkspaceTabStrip.Item(id: tab.id, name: tab.name, isActive: tab.id == active,
+                                   attention: appState.layoutRollup(tab: tab, in: layout, directory: peers),
+                                   isZoomed: tab.zoom != nil, canClose: layout.tabs.count > 1)
+        }
+        if picking {
+            items.append(.init(id: "pending-tab", name: "새 탭", isActive: true, isPending: true, canClose: false))
+        }
+        return WorkspaceTabStrip(
+            items: items,
+            onSelect: { id in
+                if id == "pending-tab" { return }
+                appState.cancelLayoutSplit()
+                appState.selectLayoutTab(id, in: layout)
+            },
+            onClose: { appState.closeLayoutTab($0, in: layout) },
+            onRename: { appState.renameLayoutTab($0, to: $1, in: layout) },
+            onMove: { appState.moveLayoutTab($0, to: $1, in: layout) },
+            onNew: { appState.beginLayoutNewTab(in: layout) })
+    }
+
+    private var legacyStrip: some View {
+        WorkspaceTabStrip(
+            items: appState.sessions.map { session in
+                WorkspaceTabStrip.Item(id: session.id.uuidString, name: session.name,
+                                       isActive: appState.selectedSession?.id == session.id,
+                                       attention: appState.agentRollup(forTab: session, directory: peers),
+                                       canClose: session.kind != .tmuxMain)
+            },
+            onSelect: { id in
+                if let session = appState.sessions.first(where: { $0.id.uuidString == id }) { appState.selectSession(session) }
+            },
+            onClose: { id in
+                if let session = appState.sessions.first(where: { $0.id.uuidString == id }) { appState.removeSession(session) }
+            },
+            onNew: { appState.addDefaultTab() })
+    }
+}
+
+/// 탭 전체를 차지하는 고르는 상자(새 탭).
+struct PickerCardStandalone<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ScrollView {
+            content
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 48)
+        }
+        .scrollIndicators(.never)
+        .background(Color(Chrome.pane))
+        .clipShape(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous))
+        .overlay(PaneRim(isFocused: true, radius: ContentView.cardRadius))
     }
 }

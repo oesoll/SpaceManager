@@ -127,48 +127,7 @@ struct WorkspaceListView: View {
                         }
                     }
 
-                    // 선택된 워크스페이스의 탭 폴더링 — 탭이 2개 이상일 때만 하위 목록 표시.
-                    // 배치 데이터가 있으면 그 탭(세션 층의 원본)을, 없으면 지금까지의 tmux 탭을 보인다.
-                    if appState.selectedWorkspace?.id == workspace.id,
-                       let layout = appState.layout(for: workspace, directory: layouts), layout.tabs.count > 1 {
-                        VStack(spacing: 0) {
-                            ForEach(layout.tabs) { tab in
-                                LayoutTabRow(
-                                    name: tab.name,
-                                    isSelected: appState.displayedTab(of: layout)?.id == tab.id,
-                                    attention: appState.layoutRollup(tab: tab, in: layout, directory: peers),
-                                    onSelect: { appState.selectLayoutTab(tab.id, in: layout) }
-                                )
-                            }
-                        }
-                        .frame(width: (isCompact ? Sidebar.compactWidth : Sidebar.workspaceWidth) - 12)
-                        .opacity(isCompact ? 0 : 1)
-                        .clipped()
-                        .allowsHitTesting(!isCompact)
-                        .accessibilityHidden(isCompact)
-                    } else if appState.selectedWorkspace?.id == workspace.id && appState.sessions.count > 1
-                                && appState.layout(for: workspace, directory: layouts) == nil {
-                        VStack(spacing: 0) {
-                            ForEach(appState.sessions) { session in
-                                WorkspaceTabRow(
-                                    session: session,
-                                    isSelected: appState.selectedSession?.id == session.id,
-                                    attention: appState.agentRollup(forTab: session, directory: peers),
-                                    onSelect: {
-                                        appState.selectSession(session)
-                                    },
-                                    onClose: { appState.removeSession(session) }
-                                )
-                            }
-                        }
-                        // Retain these rows' height so every folder keeps its Y
-                        // position while names and subordinate tabs fade away.
-                        .frame(width: (isCompact ? Sidebar.compactWidth : Sidebar.workspaceWidth) - 12)
-                        .opacity(isCompact ? 0 : 1)
-                        .clipped()
-                        .allowsHitTesting(!isCompact)
-                        .accessibilityHidden(isCompact)
-                    }
+                    // 탭은 터미널 아래 탭 막대(WorkspaceTabStrip)에서 오간다(SEOL 10/31). 사이드바는 워크스페이스만.
                 }
                 .padding(.horizontal, 6)
             }

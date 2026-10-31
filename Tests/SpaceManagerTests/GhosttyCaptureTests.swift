@@ -15,7 +15,8 @@ final class GhosttyCaptureTests: XCTestCase {
         printf '\\033[1m⏺\\033[0m 리뷰를 마쳤습니다. 결제 금액 반올림이 두 군데에서 다릅니다.\\n'
         printf '  \\033[2m⎿  PriceRow는 Math.round, OrderSummary는 Math.floor\\033[0m\\n\\n'
         for i in 0 1 2 3 4 5 6 7; do printf "\\033[3${i}m■ 3$i \\033[9${i}m■ 9$i\\033[0m  "; done; printf '\\n\\n'
-        printf '\\033[38;5;210m✻\\033[0m Running tests… \\033[2m(38s · esc to interrupt)\\033[0m\\n'
+        printf '\\033[38;5;210m✻\\033[0m Running tests… \\033[2m(38s · esc to interrupt)\\033[0m\\n\\n'
+        printf '> 결제 금액을 다시 '
         sleep 30
         """.write(to: script, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: script) }
@@ -46,6 +47,16 @@ final class GhosttyCaptureTests: XCTestCase {
             .appendingPathComponent(".build/window-capture")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try png.write(to: folder.appendingPathComponent("ghostty-\(dark ? "dark" : "light").png"))
+
+        // 한글 조합 중(preedit) 모양: 입력기가 '한'을 조합하는 순간을 그대로 흉내 낸다.
+        window.makeFirstResponder(view)
+        view.setMarkedText("한", selectedRange: NSRange(location: 1, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        let composing = try XCTUnwrap(createImage(.null, 1 << 3, UInt32(window.windowNumber), 1)?.takeRetainedValue())
+        try XCTUnwrap(NSBitmapImageRep(cgImage: composing).representation(using: .png, properties: [:]))
+            .write(to: folder.appendingPathComponent("ghostty-preedit-\(dark ? "dark" : "light").png"))
+        view.unmarkText()
 
         // 무게: 셸 표면 세 개를 더 연다. 웹뷰 때는 하나에 WebKit 프로세스 하나(수십 MB)였다.
         var more: [GhosttyTerminalView] = []

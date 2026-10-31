@@ -94,7 +94,11 @@ struct AppCommands: Commands {
             .disabled(appState == nil || appState?.windowKind == .quick)
 
             Button(appState?.windowKind == .quick ? "New Quick Conversation" : "New Terminal Tab") {
-                appState?.addDefaultTab()
+                if let appState, let layout = appState.selectedLayout {
+                    appState.beginLayoutNewTab(in: layout)
+                } else {
+                    appState?.addDefaultTab()
+                }
             }
             .keyboardShortcut("t", modifiers: .command)
             .disabled(appState == nil)
@@ -108,16 +112,22 @@ struct AppCommands: Commands {
 
         CommandMenu("Tabs") {
             Button("Previous Tab") {
-                appState?.selectPreviousSession()
+                appState?.stepTab(forward: false)
             }
             .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
             .disabled(appState == nil)
 
             Button("Next Tab") {
-                appState?.selectNextSession()
+                appState?.stepTab(forward: true)
             }
             .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
             .disabled(appState == nil)
+
+            ForEach(1...9, id: \.self) { number in
+                Button("탭 \(number)") { appState?.selectTab(at: number - 1) }
+                    .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
+                    .disabled(appState == nil)
+            }
 
             Divider()
 
