@@ -17,11 +17,6 @@ final class RevealTests: XCTestCase {
 
         let dir = home.appendingPathComponent("work/flat")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let storage = home.appendingPathComponent(".space-manager")
-        try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode([Workspace(rootPath: dir.path)]).write(to: storage.appendingPathComponent("workspaces.json"))
 
         let host = PeerDirectory.shared.localHostName
         let folder = home.appendingPathComponent(".smux/state/sm/workspaces")
@@ -34,10 +29,15 @@ final class RevealTests: XCTestCase {
          "panes": {"p-a": {"session": "flat-main"}, "p-c": {"session": "flat-sol"}, "p-d": {"session": "Habitrend-hoopoe"}}}
         """.write(to: folder.appendingPathComponent("flat.json"), atomically: true, encoding: .utf8)
 
-        // 창 하나가 워크스페이스를 가져가면 다음 창에는 없다(저장소가 프로세스에 하나) — 시험들이 한 창을 같이 쓴다.
-        if Self.window == nil { Self.window = AppState(windowKind: .workspace) }
+        // 저장소는 프로세스에 하나라 다른 시험이 먼저 읽어 둔다 — 파일에 기대지 않고 이 창에 직접 만든다.
+        if Self.window == nil {
+            let state = AppState(windowKind: .workspace)
+            XCTAssertNil(state.createWorkspace(rootPath: dir.path))
+            Self.window = state
+        }
         appState = Self.window
-        workspace = try XCTUnwrap(appState.workspaces.first { $0.name == "flat" })
+        workspace = try XCTUnwrap(appState.workspaces.first { $0.rootPath == dir.path })
+        if appState.selectedWorkspace?.id != workspace.id { appState.selectWorkspace(workspace) }
         appState.layoutInteraction.focusOverride = nil
         appState.layoutInteraction.activeTabOverride = nil
         key = LayoutDirectory.key(workspace: "flat", host: host)
