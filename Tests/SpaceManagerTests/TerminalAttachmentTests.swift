@@ -9,18 +9,22 @@ final class TerminalAttachmentTests: XCTestCase {
     /// 세션 층이 기기·소켓·ssh를 알아서 고른다. 화면 층은 이름@기기 하나만 넘긴다.
     func testAgentAttachesThroughPeerWithOneQuotedArgument() throws {
         let command = try XCTUnwrap(TerminalAttachment.agent(name: "it's-qa", host: "arch", agent: nil).command())
-        XCTAssertEqual(command, #"exec sm-session attach 'it'\''s-qa@arch'"#)
-        // 셸이 해석한 뒤 peer가 받는 인자를 실제로 본다.
-        let bin = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        XCTAssertEqual(command, "exec '" + NSHomeDirectory() + "/.smux/bin/sm-session' attach " + #"'it'\''s-qa@arch'"#)
+        // 셸이 해석한 뒤 세션 층이 받는 인자를 실제로 본다. PATH에 ~/.smux/bin이 없어도 붙어야 한다(Finder로
+        // 뜬 앱). 가짜 sm-session은 그 경로에 둔다 — 실제 홈이면 진짜를 덮으므로 격리된 홈에서만.
+        let realHome = URL(fileURLWithPath: String(cString: getpwuid(getuid())!.pointee.pw_dir))
+        try XCTSkipIf(URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL == realHome.standardizedFileURL,
+                      "run through scripts/test-isolated.sh")
+        let bin = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".smux/bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: bin) }
         let peer = bin.appendingPathComponent("sm-session")
+        defer { try? FileManager.default.removeItem(at: peer) }
         try "#!/bin/sh\nfor a in \"$@\"; do printf 'arg=%s\\n' \"$a\"; done\n".write(to: peer, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: peer.path)
         let shell = Process()
         shell.executableURL = URL(fileURLWithPath: "/bin/sh")
         shell.arguments = ["-c", command]
-        shell.environment = ["PATH": bin.path + ":/usr/bin:/bin"]
+        shell.environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
         let out = Pipe()
         shell.standardOutput = out
         try shell.run()
