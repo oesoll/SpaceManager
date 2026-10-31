@@ -189,6 +189,10 @@ enum GhosttyConfigText {
             // 같은 Apple SD Gothic Neo를 대체 글꼴로 고르고, Ghostty가 Menlo 높이에 맞춰 키운다(네이티브 Ghostty와 같다).
             "font-family = Menlo",
             "font-size = 13",
+            // macOS가 웹뷰·Terminal.app 글자에 하는 획 다듬기. 끄면(Ghostty 기본) 같은 Menlo 13이 25% 얇게
+            // 그려져 "너무 얇다"(SEOL 10/31, Fine의 xterm.js와 비교). 켜면(세기 255) 웹뷰와 잉크 양이 같다
+            // (GhosttyWeightTests: 웹뷰 1,403,583 · 끔 1,053,623 · 켬 1,403,449).
+            "font-thicken = true",
             "cursor-style = bar",
             "cursor-style-blink = true",
             "macos-option-as-alt = false",
