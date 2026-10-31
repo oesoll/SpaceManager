@@ -84,7 +84,7 @@ Quick conversations run Claude Code, found on your PATH. Their working directory
 ### Build and run
 
 ```sh
-git clone https://github.com/NEWBIE0413/SpaceManager.git
+git clone https://github.com/oesoll/SpaceManager.git
 cd SpaceManager
 ./scripts/test-isolated.sh
 swift build -c release
