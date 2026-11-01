@@ -95,6 +95,12 @@ struct SessionTerminalWrapper: NSViewRepresentable {
         syncPalette()
         terminalLayout.attach(host)
         host.animatesTransitions = !reduceMotion
+        if let director = session.stageDirector {
+            // 세션 패널: 표면 대신 무대를 둔다. 보이는 패널만 무대를 깨운다(보는 것이 곧 깨우기).
+            host.showStage(director.stage)
+            if shown { director.begin() }
+            return host
+        }
         guard !waitsUntilShown else { return host }
         let terminal = session.getOrCreateTerminal()
         terminal.isShown = shown
@@ -106,6 +112,15 @@ struct SessionTerminalWrapper: NSViewRepresentable {
         syncPalette()
         terminalLayout.attach(host)
         host.animatesTransitions = !reduceMotion
+        if let director = session.stageDirector {
+            let changed = host.showStage(director.stage)
+            if shown {
+                let starting = !director.isActive
+                director.begin()
+                if (changed || starting) && host.window != nil { session.focusTerminal() }
+            }
+            return
+        }
         guard !waitsUntilShown else { return }
         let terminal = session.getOrCreateTerminal()
         terminal.isShown = shown
@@ -204,8 +219,30 @@ final class TerminalHostView: NSView {
         }
     }
 
+    /// 무대(세션 패널)를 둔다. 표면 바꿔 끼우기·크기 주기는 무대가 안에서 하고, 여기서는 무대의 크기만 준다
+    /// (사이드바가 접히는 동안 미루는 것은 터미널과 같다).
+    private(set) weak var stage: NSView?
+
+    @discardableResult
+    func showStage(_ next: NSView) -> Bool {
+        guard stage !== next || next.superview !== self else { updateViewport(); return false }
+        terminal = nil
+        outgoing = nil
+        swapGeneration += 1
+        for view in subviews where view !== next { view.removeFromSuperview() }
+        stage = next
+        next.translatesAutoresizingMaskIntoConstraints = true
+        next.autoresizingMask = []
+        next.frame = NSRect(origin: .zero, size: resizeDeferred ? next.frame.size : bounds.size)
+        addSubview(next)
+        updateViewport()
+        return true
+    }
+
     @discardableResult
     func show(_ next: GhosttyTerminalView) -> Bool {
+        stage?.removeFromSuperview()
+        stage = nil
         let changed = terminal !== next
         if changed, window != nil, outgoing === next {
             // A→B→A before B has painted: the visible A is already correct.
@@ -274,9 +311,12 @@ final class TerminalHostView: NSView {
     }
 
     private func updateViewport() {
-        guard !resizeDeferred, !settling, !liveResize, !inLiveResize,
-              bounds.width > 0, bounds.height > 0,
-              let terminal, terminal.superview === self else { return }
+        guard !resizeDeferred, !settling, !liveResize, !inLiveResize, bounds.width > 0, bounds.height > 0 else { return }
+        if let stage, stage.superview === self {
+            if stage.frame != bounds { stage.frame = bounds; stage.layoutSubtreeIfNeeded() }
+            return
+        }
+        guard let terminal, terminal.superview === self else { return }
         if terminal.frame != bounds {
             terminal.frame = bounds
             terminal.layoutSubtreeIfNeeded()
@@ -286,6 +326,11 @@ final class TerminalHostView: NSView {
     // Pointer input always belongs to the selected tab, even while the old
     // surface covers it during the fade. The old PTY cannot receive stray clicks.
     override func hitTest(_ point: NSPoint) -> NSView? {
+        if let stage, stage.superview === self {
+            let local = convert(point, from: superview)
+            guard bounds.contains(local) else { return nil }
+            return stage.hitTest(convert(local, to: stage.superview)) ?? stage
+        }
         guard let terminal, terminal.superview === self else { return super.hitTest(point) }
         let local = convert(point, from: superview)
         guard bounds.contains(local) else { return nil }

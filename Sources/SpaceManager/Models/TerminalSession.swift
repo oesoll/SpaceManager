@@ -42,7 +42,59 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     /// 작업 창의 라이트/다크를 따른다. 터미널이 아직 없으면 만들 때 이 값을 쓴다.
     /// 화면이 다시 그려질 때마다 같은 값이 다시 들어온다 — 바뀐 때만 표면 설정을 다시 건다.
     var palette: TerminalPalette {
-        didSet { if palette != oldValue { terminalView?.setTheme(palette.ghosttyTheme) } }
+        didSet {
+            guard palette != oldValue else { return }
+            terminalView?.setTheme(palette.ghosttyTheme)
+            if let stageDirectorStorage { MainActor.assumeIsolated { stageDirectorStorage.stage.theme = palette.ghosttyTheme } }
+        }
+    }
+
+    // MARK: 세션 무대 (잠든 세션 화면)
+
+    private var stageDirectorStorage: SessionStageDirector?
+    /// 세션 층의 세션을 보이는 패널의 무대(마지막 화면·어두운 막·깨우기). 다른 패널은 nil — 예전처럼 표면 그대로.
+    var stageDirector: SessionStageDirector? {
+        if let stageDirectorStorage { return stageDirectorStorage }
+        guard case .agent(let name, let host, _) = attachment else { return nil }
+        return MainActor.assumeIsolated { () -> SessionStageDirector? in
+            guard SessionStageDirector.enabled else { return nil }
+            let director = SessionStageDirector(target: name + "@" + host) { [unowned self] in
+                self.started = true
+                return self.makeTerminal(noScreen: true)
+            }
+            director.stage.theme = palette.ghosttyTheme
+            director.onLiveChange = { [weak self] view in
+                guard let self else { return }
+                self.objectWillChange.send()
+                self.terminalView = view
+                self.isRunning = view != nil
+            }
+            director.onReconnecting = { [weak self] value in
+                guard let self, self.isReconnecting != value else { return }
+                self.isReconnecting = value
+            }
+            stageDirectorStorage = director
+            return director
+        }
+    }
+
+    /// 무대가 이 패널을 맡고 있는가(보이기 시작한 뒤).
+    private var stageIsActive: Bool {
+        guard let stageDirectorStorage else { return false }
+        return MainActor.assumeIsolated { stageDirectorStorage.isActive }
+    }
+
+    /// 세션 층에 보는 창으로 잡혀 있는가(attach 표면이 있거나, 무대가 상태를 듣고 있다).
+    var holdsAttach: Bool { terminalView != nil || stageIsActive }
+
+    /// 오래 가려진 패널의 attach를 내린다(LayoutTerminals.parkHidden). 무대가 맡은 패널은 마지막 화면을 장면으로
+    /// 남겨 다시 보일 때 그 아래에서 다시 붙고, 아니면 터미널을 닫는다.
+    func park() {
+        if let stageDirectorStorage, stageIsActive {
+            MainActor.assumeIsolated { stageDirectorStorage.park() }
+        } else {
+            cleanup()
+        }
     }
     private var started = false
     private var quickSessionId: String?
@@ -98,7 +150,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     /// 이 탭의 명령으로 새 표면을 만든다(= 새 프로세스).
     /// `sizeHint`: 재연결할 때 끊긴 표면의 크기. 없으면(처음) 창에 들어가 크기를 안 뒤에 띄운다.
     /// Quick은 클릭 순간 Claude를 띄워야 해서 기다리지 않는다.
-    private func makeTerminal(sizeHint: NSSize? = nil) -> GhosttyTerminalView {
+    private func makeTerminal(sizeHint: NSSize? = nil, noScreen: Bool = false) -> GhosttyTerminalView {
         cancelReconnectTimer()
         if kind == .quick {
             workingDirectory = QuickSessionPolicy.ensureWorkingDirectory()
@@ -106,7 +158,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         let startDir = FileManager.default.fileExists(atPath: workingDirectory)
             ? workingDirectory : NSHomeDirectory()
         let launch = Self.ghosttyLaunch(
-            arguments: launchArguments(startDirectory: startDir),
+            arguments: launchArguments(startDirectory: startDir, noScreen: noScreen),
             environment: launchEnvironment(),
             workingDirectory: startDir)
         let hint = sizeHint.flatMap { $0.width > 0 && $0.height > 0 ? $0 : nil }
@@ -129,8 +181,8 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         return view
     }
 
-    private func launchArguments(startDirectory: String) -> [String] {
-        if kind == .shell, let command = attachment.command(recordingExitTo: exitStatusPath) {
+    private func launchArguments(startDirectory: String, noScreen: Bool = false) -> [String] {
+        if kind == .shell, let command = attachment.command(recordingExitTo: exitStatusPath, noScreen: noScreen) {
             return ["-lc", command]
         }
         let arguments = Self.launchArguments(
@@ -308,6 +360,11 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
 
     private func surfaceExited(_ view: GhosttyTerminalView, code reported: Int32, connectedFor: TimeInterval) {
         let code = recordedExit(or: reported)
+        if let stageDirectorStorage, stageIsActive {
+            // 무대가 맡은 패널: 일부러 내린 것인지, 끊겨서 다시 붙어야 하는지는 무대가 안다.
+            MainActor.assumeIsolated { stageDirectorStorage.surfaceExited(view) }
+            return
+        }
         if view === pendingView {
             pendingTimer?.invalidate()
             pendingView = nil
@@ -351,6 +408,10 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     private func observeWake() {
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            if let self, let director = self.stageDirectorStorage, self.stageIsActive {
+                MainActor.assumeIsolated { director.reconnectNow() }
+                return
+            }
             guard let self, self.isReconnecting, self.pendingView == nil else { return }
             self.reconnectAttempt = 0
             self.cancelReconnectTimer()
@@ -439,6 +500,10 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
 
     /// CLI도 화면 선택과 같은 경로로 죽은 연결을 복구한다. 실행 중인 tmux는 건드리지 않는다.
     func reconnectIfNeeded() {
+        if let stageDirectorStorage, stageIsActive {
+            MainActor.assumeIsolated { stageDirectorStorage.reconnectNow() }
+            return
+        }
         _ = getOrCreateTerminal()
         restartIfDead()
     }
@@ -459,11 +524,17 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
 
     func focusTerminal() {
         DispatchQueue.main.async { [weak self] in
-            self?.terminalView?.focusTerminal()
+            guard let self else { return }
+            if let director = self.stageDirectorStorage, self.stageIsActive {
+                MainActor.assumeIsolated { director.stage.focus() }   // 덮였으면 무대가 키를 붙잡는다
+                return
+            }
+            self.terminalView?.focusTerminal()
         }
     }
 
     func cleanup(force: Bool = false) {
+        if let stageDirectorStorage { MainActor.assumeIsolated { stageDirectorStorage.end() } }
         started = false
         stopWatchingInputForNotice()
         cancelReconnectTimer()

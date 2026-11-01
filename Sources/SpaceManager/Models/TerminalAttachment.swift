@@ -18,13 +18,14 @@ enum TerminalAttachment: Equatable {
 
     /// 로그인 셸이 실행할 명령. nil이면 셸 그대로.
     /// `recordingExitTo`: 명령이 끝날 때 셸이 종료 코드를 적을 파일(TerminalSession.exitStatusPath).
-    func command(recordingExitTo path: String? = nil) -> String? {
+    /// `noScreen`: 저장된 마지막 화면을 attach가 칠하지 않는다 — 앱(무대)이 그린다(SessionStageDirector).
+    func command(recordingExitTo path: String? = nil, noScreen: Bool = false) -> String? {
         switch self {
         case .shell:
             return nil
         case .agent(let name, let host, _) where path != nil:
-            return Self.recordingExit("exec " + Self.quote(SessionLayer.executable) + " attach " + Self.quote(name + "@" + host),
-                                      to: path!)
+            return Self.recordingExit("exec " + Self.quote(SessionLayer.executable) + " attach " + Self.quote(name + "@" + host)
+                                      + (noScreen ? " --no-screen" : ""), to: path!)
         case .agent(let name, let host, _):
             // 이름이 아니라 경로로 부른다. 앱이 Finder·로그인 항목으로 뜨면(또는 깨끗한 환경으로 띄우면) PATH에
             // ~/.smux/bin이 없고, 패널의 로그인 셸(-lc)은 그 경로를 넣는 대화형 설정을 읽지 않는다 — 10/31 모든

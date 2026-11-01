@@ -91,11 +91,11 @@ final class LayoutTerminals {
     func parkHidden(displayed: Set<String>, now: Date = Date(), grace: TimeInterval = LayoutTerminals.parkAfter) {
         for key in displayed { lastDisplayed[key] = now }
         let attached = Set(sessions.filter { _, session in
-            if case .agent = session.attachment { return session.terminalView != nil }
+            if case .agent = session.attachment { return session.holdsAttach }
             return false
         }.keys)
         for key in Self.toPark(attached: attached, displayed: displayed, lastDisplayed: lastDisplayed, now: now, grace: grace) {
-            sessions[key]?.cleanup()
+            sessions[key]?.park()
         }
     }
 
