@@ -64,8 +64,18 @@ enum ControlCommands {
             let absolute = expanded.hasPrefix("/") ? expanded : FileManager.default.currentDirectoryPath + "/" + expanded
             var host = r.string("host") ?? ""
             if ["local", "none", "-"].contains(host) { host = "" }
-            if let error = entry.state.createWorkspace(rootPath: (absolute as NSString).standardizingPath, customName: r.string("name"), remoteHost: host) { throw fail(error) }
-            guard let ws = entry.state.selectedWorkspace else { throw fail("workspace not created") }
+            let select = r.bool("select") ?? true
+            let layoutName = r.string("layout")
+            // 같은 배치를 이미 보여 주는 워크스페이스가 있으면 하나 더 만들지 않는다(에이전트가 두 번 불러도 그대로).
+            if let layoutName, let existing = liveWindows().lazy.compactMap({ entry in
+                entry.state.workspaces.first { $0.effectiveTmuxSessionName == layoutName && ($0.remoteHost ?? "") == host }
+                    .map { (entry, $0) }
+            }).first {
+                return describe(existing.1, in: existing.0).merging(["existed": true]) { $1 }
+            }
+            if let error = entry.state.createWorkspace(rootPath: (absolute as NSString).standardizingPath, customName: r.string("name"),
+                                                       remoteHost: host, layoutName: layoutName, select: select) { throw fail(error) }
+            guard let ws = select ? entry.state.selectedWorkspace : entry.state.workspaces.last else { throw fail("workspace not created") }
             return describe(ws, in: entry)
 
         case "ws.rename":

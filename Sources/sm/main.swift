@@ -6,65 +6,52 @@ import Foundation
 let socketPath = (NSHomeDirectory() as NSString).appendingPathComponent(".space-manager/control.sock")
 let bundleID = "com.spacemanager.app"
 
-let usage = """
-sm — SpaceManager를 터미널에서 조작한다
+let appUsage = """
+Mac app (sm here also draws the layout above; these verbs exist only on the Mac):
+  sm show NAME[@HOST]       Put that agent in front of SEOL — its sm pane (keys go to it), or the Fine tab that
+                            shows it; nowhere yet → a new tab. A workspace name selects that workspace instead.
+                            This is the only command that moves SEOL's focus; layout commands never do.
+  sm show | hide | toggle   Show or hide all sm windows (the menu bar icon does the same; the notch stays)
+  sm to-fine NAME[@HOST]    Move the pane showing NAME to a Fine tab (the session keeps running). Back: fine move TAB sm
+  sm notify MESSAGE [--title T] [--state waiting|blocked|error|working|done] [--id KEY] [--source sm:NAME]
+                            Post to the notch (same --id updates it). To call SEOL use seol-notch instead.
+  sm notch [list] | dismiss ID | open ID | show | hide | status
+  sm capture [-w WIN] FILE.png [--rect x,y,w,h]   Picture of an sm window only (never the whole screen)
+  sm windows | sm window new|focus|close WIN | sm tabs [WS]
+  sm quick [list|new|resume ID|home] · sm activity · sm perf … · sm ping
+  sm app ws|tab|state …     The app's older commands (sidebar rename/select/delete/remote, shell/tmux tabs,
+                            window-states dump). `sm ws`/`sm tab` are the session layer's, as on every machine.
 
-  sm windows                          창 목록
-  sm window new [--quick]             새 창 (워크스페이스/Quick)
-  sm window focus|close <win>         창 앞으로/닫기
-  sm window appearance <win> <light|dark|system>
-
-  sm ws [list]                        워크스페이스 목록 (모든 창)
-  sm ws add <path> [--name N] [--host arch|local]  실행 위치를 지정해 추가
-  sm ws select|delete <ws>            선택(창 앞으로)/삭제
-  sm ws rename <ws> <name>            이름 변경 (빈 문자열이면 폴더명)
-  sm ws tmux-name <ws> <name>         tmux 세션명
-  sm ws remote <ws> <host|none>       원격 호스트 (ssh 별칭) — tmux를 그 머신에서
-  sm ws move <ws> <index>             순서 이동
-  sm project add|remove <ws> <path>   추가 프로젝트 폴더
-
-  sm tabs [ws]                        탭 목록
-  sm tab shell|tmux [ws]              탭 추가
-  sm tab select|close <tab>           탭 선택/닫기
-  sm tab reconnect <tab>              끊어진 연결 재시도 (실행 중 세션 유지)
-  sm tab next|prev
-
-  sm quick [list] [-n N]              최근 Claude 대화
-  sm quick new [--model M] [--effort E] [--proxy] [prompt…]
-  sm quick resume <session-id>
-  sm quick home
-
-  sm spawn|attach|resume|ls|tail|stop|restore …
-                                      에이전트 세션 — ~/.smux/bin/sm-session에 그대로 넘긴다
-
-  sm reveal NAME[@HOST]               그 에이전트가 보이는 곳을 앞으로(sm 패널, 키 입력까지 — 또는 그 세션을
-                                      보는 Fine 탭). 어디에도 없으면 새 탭에 붙인다. 노치 알림을 누르면 이 길로 간다
-  sm hide | show | toggle             sm 창을 숨기기·보이기(메뉴 막대 아이콘과 같다 — 노치는 남는다)
-  sm to-fine NAME[@HOST]              그 세션을 보이는 패널을 Fine으로 옮긴다(Fine 탭이 붙고 패널은 닫힘, 세션은 그대로).
-                                      반대 방향은 fine move <탭> sm
-  sm notify <message> [--title T] [--state waiting|blocked|error|working|done|unknown] [--id KEY]
-            [--source sm:NAME|%PANE|fine:TAB] [--host H] [--workspace W]
-                                      화면 노치에 알림을 올린다(같은 --id면 그 항목을 바꾼다). 제어 소켓의
-                                      attention.post와 같다 — 노치가 아직 Fine에 있으면 Fine으로 넘어간다
-  sm notch [list] | dismiss <id> | open <id> | show | hide | status
-                                      노치의 알림 목록, 지우기(×와 같다), 보낸 곳 열기, 펼치기·접기
-  sm capture [-w win] <file.png> [--rect x,y,w,h]   창을 찍는다(앱이 자기 창을 찍어 화면 기록 권한이 필요 없다)
-  sm capture [-w win] --rect x,y,w,h --burst N [--every MS] [dir]
-                                      같은 자리를 N번 연달아 찍어 시각(ms)과 평균 색을 낸다(페이드 확인용)
-  sm perf keys NAME [-n COUNT]        보이는 탭에서 NAME 패널에 키를 넣고 화면에 그려지기까지(키 → 화면). NAME은
-                                      sm-bench-로 시작해야 한다(실제 에이전트에 글자가 들어가지 않게)
-  sm perf [-w win] [seconds] [--do tab:N|tab:next|focus:next|ws:NAME] [--rect x,y,w,h]
-                                      그 동안 메인 스레드가 놓친 프레임. --do는 0.3초 뒤 사람이 누르는 길로
-                                      한 번 움직이고, --rect는 같은 시간축에서 그 자리가 언제 바뀌고 멈췄는지 낸다
-  sm activity                         에이전트 활동 (transcript 기반)
-  sm state                            window-states.json 덤프
-  sm ping
-
-옵션: --json (원본 JSON), -w/--window <id|index|front>, --no-focus
-<ws>는 이름 / tmux 세션명 / 경로 / id 접두사, <tab>은 이름 / 인덱스 / id 접두사, <win>은 index / id 접두사 / front
+  On the Mac, `sm ws` lists the layouts together with SEOL's sidebar (the --ws value to type and the name SEOL
+  uses), `sm ws new NAME [--cwd DIR] [--host arch]` also adds it to the sidebar without switching SEOL's view,
+  and --ws accepts the sidebar name (--ws 인체안내서 → saengjon, --ws flat → flat@arch).
+  Options: --json, -w/--window ID|INDEX|front, --no-focus
 """
 
 struct CLIError: Error { let message: String }
+
+/// 터미널에서 한글·한자는 두 칸이다. 칸을 글자 수로 맞추면 "인체안내서" 뒤 열이 밀린다.
+func displayWidth(_ text: String) -> Int {
+    text.unicodeScalars.reduce(0) { width, u in
+        let v = u.value
+        let wide = (0x1100...0x115F).contains(v) || (0x2E80...0xA4CF).contains(v) || (0xAC00...0xD7A3).contains(v)
+            || (0xF900...0xFAFF).contains(v) || (0xFE30...0xFE4F).contains(v) || (0xFF00...0xFF60).contains(v) || (0xFFE0...0xFFE6).contains(v)
+        return width + (wide ? 2 : 1)
+    }
+}
+
+func pad(_ text: String, _ width: Int) -> String { text + String(repeating: " ", count: max(0, width - displayWidth(text))) }
+
+/// 칸을 맞춘 표. 마지막 열은 채우지 않는다.
+func alignedTable(_ rows: [[String]]) -> String {
+    guard let first = rows.first else { return "(none)" }
+    var widths = Array(repeating: 0, count: first.count)
+    for row in rows { for (i, c) in row.enumerated() where i < widths.count { widths[i] = max(widths[i], displayWidth(c)) } }
+    return rows.map { row in
+        row.enumerated().map { i, c in i == row.count - 1 ? c : pad(c, widths[i]) }.joined(separator: "  ")
+            .replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
+    }.joined(separator: "\n")
+}
 
 func send(_ command: String, _ args: [String: Any]) throws -> [String: Any] {
     if !FileManager.default.fileExists(atPath: socketPath) {
@@ -95,25 +82,265 @@ func send(_ command: String, _ args: [String: Any]) throws -> [String: Any] {
 
 // MARK: - 인자 파싱
 
-var argv = Array(CommandLine.arguments.dropFirst())
+// 맥의 `sm`은 아치·누크의 `sm`과 같은 명령이다(11/01 SEOL: 에이전트가 sm을 헷갈리지 않게). 바탕은 기기마다 도는
+// 세션 층(sm-session)이고, 이 앱은 앱만 하는 동사만 더한다 — 창·노치·숨기기·찍기·SEOL 앞에 꺼내기.
+// 전에는 세션 동사를 하나씩 골라 넘겨서 run·cp·state·screen·awake가 "unknown command"였고(pet-1101-8acc),
+// ws·tab·state는 같은 이름의 앱 명령으로 가서 에이전트가 "맥에서는 sm-session ws"라는 예외를 외워야 했다.
+// 그래서 목록을 뒤집었다: 아래 앱 동사가 아니면 전부 세션 층으로 간다. 세션 층에 새 동사가 생겨도 여기를 고칠 일이 없다.
+// 옛 앱 명령(ws add·select…, tab shell·tmux…, state 덤프)은 `sm app …` 아래로 옮겼다.
+let appVerbs: Set<String> = ["app", "windows", "window", "workspaces", "tabs", "project", "quick", "capture", "perf",
+                             "activity", "ping", "notify", "notch", "show", "reveal", "hide", "toggle", "to-fine"]
+let sessionCLI = (NSHomeDirectory() as NSString).appendingPathComponent(".smux/bin/sm-session")
 
-// 세션 층 명령은 기기마다 도는 sm-session이 맡는다(10/31 cld-claude-7과 정한 두 층). 맥에서도
-// `sm spawn …`이 아치·누크와 같은 명령이 되도록 인자를 그대로 넘기고 이 프로세스를 바꿔 끼운다.
-// ws·tab은 이 앱의 명령과 이름이 겹쳐서 넘기지 않는다(세션 층의 것은 `sm-session ws|tab …`). 11/01: 여기 없던
-// where가 "unknown command"로 막혀, 죽은 세션을 원래 칸에 살리려던 에이전트가 sm-session을 직접 찾아야 했다.
-let sessionCommands: Set<String> = ["spawn", "attach", "resume", "ls", "tail", "stop", "restore", "where", "layout",
-                                    "watch", "split", "resize", "focus", "zoom", "swap", "close", "move", "bind",
-                                    "sleep", "wake", "adopt", "migrate"]
-if let first = argv.first, sessionCommands.contains(first) {
-    let sessionCLI = (NSHomeDirectory() as NSString).appendingPathComponent(".smux/bin/sm-session")
+func fail(_ message: String, code: Int32 = 1) -> Never {
+    FileHandle.standardError.write(("sm: " + message + "\n").data(using: .utf8)!)
+    exit(code)
+}
+
+func note(_ message: String) { FileHandle.standardError.write(("sm: " + message + "\n").data(using: .utf8)!) }
+
+func execLayer(_ args: [String]) -> Never {
     guard FileManager.default.isExecutableFile(atPath: sessionCLI) else {
-        FileHandle.standardError.write("sm: \(first)는 세션 층(~/.smux/bin/sm-session)이 맡는데, 이 기기에 없습니다\n".data(using: .utf8)!)
-        exit(127)
+        fail("\(args.first ?? "")는 세션 층(~/.smux/bin/sm-session)이 맡는데, 이 기기에 없습니다", code: 127)
     }
-    let cArgs = ([sessionCLI] + argv).map { strdup($0) } + [nil]
+    let cArgs = ([sessionCLI] + args).map { strdup($0) } + [nil]
     execv(sessionCLI, cArgs)
-    FileHandle.standardError.write("sm: sm-session 실행 실패: \(String(cString: strerror(errno)))\n".data(using: .utf8)!)
-    exit(126)
+    fail("sm-session 실행 실패: \(String(cString: strerror(errno)))", code: 126)
+}
+
+/// 세션 층을 불러 출력을 받는다(맥에서 결과를 앱 쪽 사실과 합칠 때만).
+func runLayer(_ args: [String]) -> (status: Int32, out: Data, err: String) {
+    let p = Process(); p.executableURL = URL(fileURLWithPath: sessionCLI); p.arguments = args
+    let out = Pipe(), err = Pipe(); p.standardOutput = out; p.standardError = err
+    do { try p.run() } catch { return (127, Data(), "\(error)") }
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    let errText = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    p.waitUntilExit()
+    return (p.terminationStatus, data, errText)
+}
+
+/// 앱이 이미 떠 있을 때만 묻는다 — 목록을 보거나 이름을 풀려고 SEOL 화면에 앱을 띄우지 않는다.
+func askAppIfRunning(_ command: String, _ args: [String: Any] = [:]) -> Any? {
+    guard FileManager.default.fileExists(atPath: socketPath) else { return nil }
+    return (try? send(command, args))?["result"]
+}
+
+/// 사이드바의 실행 위치(ssh 별칭: arch, nuc-pet)를 세션 층의 기기 이름(arch, nuc)으로. `~/.smux/hosts`의 `이름 = 별칭`.
+func layerHost(forAlias alias: String) -> String {
+    let text = (try? String(contentsOfFile: NSHomeDirectory() + "/.smux/hosts", encoding: .utf8)) ?? ""
+    for line in text.split(separator: "\n") where !line.hasPrefix("#") {
+        let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+        if parts.count == 2, parts[1] == alias { return parts[0] }
+    }
+    return alias
+}
+
+/// SEOL이 부르는 워크스페이스 이름(사이드바: "인체안내서", "flat")을 세션 층의 `--ws` 값("saengjon", "flat@arch")으로.
+/// 맥 에이전트가 사이드바 이름으로 말해도 원격·이름 다른 배치에 닿게 한다. 이미 `@HOST`가 붙었거나 모르는 이름은 그대로.
+func layerWorkspace(_ value: String) -> String {
+    guard !value.contains("@"), let rows = askAppIfRunning("ws.list") as? [[String: Any]] else { return value }
+    func field(_ row: [String: Any], _ key: String) -> String { row[key] as? String ?? "" }
+    let match = rows.first { field($0, "tmuxSession") == value }
+        ?? rows.first { field($0, "name") == value }
+        ?? rows.first { field($0, "name").lowercased() == value.lowercased() }
+    guard let row = match else { return value }
+    let remote = field(row, "remoteHost")
+    return field(row, "tmuxSession") + (remote.isEmpty ? "" : "@" + layerHost(forAlias: remote))
+}
+
+func rewriteWorkspaceFlags(_ args: [String]) -> [String] {
+    var out = args
+    var i = 0
+    while i < out.count {
+        if out[i] == "--" { break }
+        if out[i] == "--ws", i + 1 < out.count { out[i + 1] = layerWorkspace(out[i + 1]); i += 2; continue }
+        if out[i].hasPrefix("--ws=") { out[i] = "--ws=" + layerWorkspace(String(out[i].dropFirst(5))) }
+        i += 1
+    }
+    // `sm layout WS`: 첫 인자가 워크스페이스다.
+    if out.first == "layout", out.count > 1, !out[1].hasPrefix("-") { out[1] = layerWorkspace(out[1]) }
+    return out
+}
+
+/// `sm ws`(목록): 세션 층의 배치와 SEOL 사이드바를 한 표로. 에이전트가 알아야 할 것은 `--ws`에 칠 값과,
+/// SEOL이 그걸 무슨 이름으로 부르고 지금 보고 있는지다.
+func listWorkspaces(json: Bool) -> Never {
+    let layer = runLayer(["ws", "ls", "--json"])
+    let layouts = (try? JSONSerialization.jsonObject(with: layer.out)) as? [[String: Any]] ?? []
+    let localHost = layouts.first?["host"] as? String ?? "mac"
+    let sidebar = askAppIfRunning("ws.list") as? [[String: Any]]
+    var rows: [[String: Any]] = []
+    var seen = Set<String>()
+    for w in sidebar ?? [] {
+        let alias = w["remoteHost"] as? String ?? ""
+        let host = alias.isEmpty ? localHost : layerHost(forAlias: alias)
+        let name = w["tmuxSession"] as? String ?? ""
+        let layout = alias.isEmpty ? layouts.first { $0["workspace"] as? String == name } : nil
+        seen.insert(name + "@" + host)
+        rows.append(["ws": alias.isEmpty ? name : name + "@" + host, "workspace": name, "host": host,
+                     "name": w["name"] as? String ?? name, "cwd": layout?["cwd"] as? String ?? w["rootPath"] as? String ?? "",
+                     "tabs": layout?["tabs"] ?? NSNull(), "in_sidebar": true, "selected": w["selected"] as? Bool ?? false])
+    }
+    for l in layouts {
+        let name = l["workspace"] as? String ?? "", host = l["host"] as? String ?? localHost
+        guard !seen.contains(name + "@" + host) else { continue }
+        rows.append(["ws": name, "workspace": name, "host": host, "name": NSNull(), "cwd": l["cwd"] as? String ?? "",
+                     "tabs": l["tabs"] ?? NSNull(), "in_sidebar": false, "selected": false])
+    }
+    if json {
+        let data = (try? JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+        print(String(decoding: data, as: UTF8.self)); exit(0)
+    }
+    func home(_ p: String) -> String {
+        p.replacingOccurrences(of: NSHomeDirectory(), with: "~").replacingOccurrences(of: "/home/" + NSUserName(), with: "~")
+    }
+    var table = [["--ws", "SEOL이 보는 이름", "탭", "폴더", ""]]
+    for r in rows {
+        let tabs = r["tabs"] as? Int
+        let shown = r["in_sidebar"] as? Bool == true ? (r["selected"] as? Bool == true ? "보는 중" : "") : "사이드바 밖"
+        table.append([r["ws"] as? String ?? "", r["name"] as? String ?? "-", tabs.map(String.init) ?? "-", home(r["cwd"] as? String ?? ""), shown])
+    }
+    print(alignedTable(table))
+    if sidebar == nil { print("(sm 앱이 꺼져 있어 사이드바는 빼고 이 맥의 배치만)") }
+    exit(0)
+}
+
+/// `sm ws new NAME[@HOST] [--cwd DIR] [--host H]`: 배치를 그 기기에 만들고, SEOL 사이드바에도 넣는다(고르지는 않는다 —
+/// SEOL이 보던 워크스페이스는 그대로). 아치에서 만든 배치는 이 앱이 모르므로, 맥에서 만들면 둘 다 한 번에 된다.
+func newWorkspace(_ rest: [String], json: Bool) -> Never {
+    var name: String?, cwd: String?, host: String?
+    var i = 0
+    while i < rest.count {
+        switch rest[i] {
+        case "--cwd": i += 1; cwd = i < rest.count ? rest[i] : nil
+        case "--host": i += 1; host = i < rest.count ? rest[i] : nil
+        case "--name": i += 1; name = i < rest.count ? rest[i] : nil
+        case let a where a.hasPrefix("-"): fail("sm ws new: 모르는 옵션 \(a) — sm ws new NAME [--cwd DIR] [--host arch]")
+        default: if name == nil { name = rest[i] } else { fail("sm ws new: 이름은 하나 — sm ws new NAME [--cwd DIR] [--host arch]") }
+        }
+        i += 1
+    }
+    guard var target = name, !target.isEmpty else { fail("usage: sm ws new NAME [--cwd DIR] [--host arch]") }
+    if let host, !target.contains("@") { target += "@" + layerHost(forAlias: host) }
+    let parts = target.split(separator: "@", maxSplits: 1).map(String.init)
+    let remote = parts.count == 2 && parts[1] != "mac" && parts[1] != "local" ? parts[1] : nil
+    // 원격은 그 기기의 폴더다. 안 주면 그 기기의 홈(~)이 아니라 같은 이름의 ~/폴더를 가정하지 않고, 홈에 둔다.
+    let dir = cwd ?? (remote == nil ? FileManager.default.currentDirectoryPath : "~")
+    var made = runLayer(["ws", "new", remote == nil ? parts[0] : target, "--cwd", dir, "--json"])
+    var existed = false
+    if made.status != 0 {
+        guard made.err.contains("workspace exists") else { fail(made.err.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "sm: ", with: "")) }
+        existed = true
+        made = runLayer(["layout", remote == nil ? parts[0] : target, "--json"])
+        if made.status != 0 { fail(made.err.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+    let layout = (try? JSONSerialization.jsonObject(with: made.out)) as? [String: Any] ?? [:]
+    let layoutCwd = layout["cwd"] as? String ?? dir
+    // 원격 홈(/home/USER)은 사이드바에서 ~로 쓴다 — 앱은 원격 경로를 ~ 기준으로 그 기기에서 푼다.
+    let sidebarPath = remote == nil ? layoutCwd : layoutCwd.replacingOccurrences(of: "^/home/[^/]+", with: "~", options: .regularExpression)
+    var sidebarNote = "sm 앱이 꺼져 있어 사이드바에는 아직 없음 — 앱을 켜고 sm ws new를 다시 부르면 들어간다"
+    var addedArgs: [String: Any] = ["path": sidebarPath, "name": parts[0], "layout": parts[0], "select": false]
+    if let remote { addedArgs["host"] = remoteAlias(forHost: remote) }
+    if FileManager.default.fileExists(atPath: socketPath) {
+        do {
+            let result = try send("ws.add", addedArgs)["result"] as? [String: Any] ?? [:]
+            sidebarNote = result["existed"] as? Bool == true ? "사이드바에 이미 있음" : "사이드바에 넣음(SEOL이 보던 워크스페이스는 그대로)"
+        } catch let error as CLIError { sidebarNote = "사이드바에 넣지 못함: " + error.message }
+        catch { sidebarNote = "사이드바에 넣지 못함: \(error)" }
+    }
+    let ws = remote == nil ? parts[0] : target
+    if json {
+        let value: [String: Any] = ["ws": ws, "cwd": layoutCwd, "existed": existed, "sidebar": sidebarNote]
+        let data = (try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+        print(String(decoding: data, as: UTF8.self)); exit(0)
+    }
+    print("\(existed ? "이미 있음" : "만듦"): --ws \(ws) · \(layoutCwd) · \(sidebarNote)")
+    print("다음: sm tab new --ws \(ws) --name main --spawn NAME --kind claude  /  sm split --ws \(ws) --spawn NAME --kind codex")
+    exit(0)
+}
+
+/// 세션 층의 기기 이름(nuc)을 사이드바의 ssh 별칭(nuc-pet)으로 — layerHost의 반대.
+func remoteAlias(forHost host: String) -> String {
+    let text = (try? String(contentsOfFile: NSHomeDirectory() + "/.smux/hosts", encoding: .utf8)) ?? ""
+    for line in text.split(separator: "\n") where !line.hasPrefix("#") {
+        let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+        if parts.count == 2, parts[0] == host { return parts[1] }
+    }
+    return host
+}
+
+func printHelp() -> Never {
+    if FileManager.default.isExecutableFile(atPath: sessionCLI) {
+        let help = runLayer(["--help"])
+        FileHandle.standardOutput.write(help.out)
+        print("")
+    }
+    print(appUsage)
+    exit(0)
+}
+
+var argv = Array(CommandLine.arguments.dropFirst())
+let globalFlagsWithValue: Set<String> = ["-w", "--window"]
+let verbIndex: Int? = {
+    var i = 0
+    while i < argv.count {
+        let a = argv[i]
+        if globalFlagsWithValue.contains(a) { i += 2; continue }
+        if a.hasPrefix("-") && a != "-h" { i += 1; continue }
+        return i
+    }
+    return nil
+}()
+let verb = verbIndex.map { argv[$0] }
+let wantsJSON = argv.contains("--json")
+switch verb {
+case nil:
+    printHelp()
+case "-h", "help":
+    printHelp()
+case "app":
+    // 앱 명령을 이름 그대로(옛 ws·tab·state 포함).
+    argv.remove(at: verbIndex!)
+    if argv.isEmpty || argv == ["--help"] || argv == ["-h"] { print(appUsage); exit(0) }
+case "ws":
+    let rest = Array(argv[(verbIndex! + 1)...]).filter { $0 != "--json" }
+    switch rest.first {
+    case nil, "ls", "list": listWorkspaces(json: wantsJSON)
+    case "new": newWorkspace(Array(rest.dropFirst()), json: wantsJSON)
+    case "add":
+        // 옛 앱 명령 `sm ws add PATH [--name N] [--host H]` — 이제 배치까지 만든다(tmux가 아니라 세션 층 워크스페이스).
+        var path: String?, name: String?, host: String?
+        var i = 1
+        while i < rest.count {
+            switch rest[i] {
+            case "--name": i += 1; name = i < rest.count ? rest[i] : nil
+            case "--host": i += 1; host = i < rest.count ? rest[i] : nil
+            default: path = path ?? rest[i]
+            }
+            i += 1
+        }
+        guard let path else { fail("usage: sm ws new NAME [--cwd DIR] [--host arch]  (sm ws add PATH도 받는다)") }
+        let folder = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).lastPathComponent
+        let layoutName = (name ?? folder).lowercased().replacingOccurrences(of: "[^a-z0-9_-]+", with: "-", options: .regularExpression)
+        var args = [layoutName, "--cwd", path]
+        if let host, !["local", "none", "-"].contains(host) { args += ["--host", host] }
+        newWorkspace(args, json: wantsJSON)
+    case "select", "delete", "rename", "tmux-name", "remote", "move":
+        note("ws \(rest[0])는 앱 명령이다 — 앞으로 sm app ws \(rest[0]) … (이번엔 그대로 한다)")
+    default:
+        execLayer(rewriteWorkspaceFlags(argv))
+    }
+case "tab":
+    let sub = verbIndex! + 1 < argv.count ? argv[verbIndex! + 1] : nil
+    if let sub, ["shell", "tmux", "reconnect", "next", "prev"].contains(sub) {
+        note("tab \(sub)는 앱 명령이다 — 앞으로 sm app tab \(sub) … (이번엔 그대로 한다)")
+    } else {
+        execLayer(rewriteWorkspaceFlags(argv))
+    }
+case let v? where appVerbs.contains(v):
+    break
+default:
+    execLayer(rewriteWorkspaceFlags(argv))
 }
 var wantJSON = false
 var windowArg: String?
@@ -131,12 +358,12 @@ while i < argv.count {
     case "--name", "--host", "--model", "--effort", "-n", "--limit", "--rect", "--burst", "--every", "--do",
          "--title", "--state", "--id", "--source", "--workspace":
         i += 1; flags[a.hasPrefix("--") ? String(a.dropFirst(2)) : "limit"] = i < argv.count ? argv[i] : ""
-    case "-h", "--help", "help": print(usage); exit(0)
+    case "-h", "--help", "help": print(appUsage); exit(0)
     default: positional.append(a)
     }
     i += 1
 }
-guard let group = positional.first else { print(usage); exit(1) }
+guard let group = positional.first else { print(appUsage); exit(1) }
 let sub = positional.count > 1 ? positional[1] : nil
 let rest = Array(positional.dropFirst(2))
 var args: [String: Any] = [:]
@@ -148,7 +375,7 @@ func need(_ n: Int, _ what: String) throws -> [String] {
     return rest
 }
 
-let command: String
+var command: String
 do {
     switch (group, sub) {
     case ("ping", _): command = "ping"
@@ -188,9 +415,9 @@ do {
         if let burst = flags["burst"] { args["burst"] = Int(burst) ?? 1 }
         if let every = flags["every"] { args["every"] = Int(every) ?? 8 }
         if args["path"] == nil && args["burst"] == nil { throw CLIError(message: "usage: sm capture <file.png> | sm capture --rect x,y,w,h --burst N [dir]") }
-    case ("reveal", _):
+    case ("show", _?), ("reveal", _):
         command = "session.reveal"
-        guard let target = sub else { throw CLIError(message: "usage: sm reveal NAME[@HOST]") }
+        guard let target = sub else { throw CLIError(message: "usage: sm show NAME[@HOST]") }
         args["target"] = target
     case ("perf", "keys"):
         command = "perf.keys"
@@ -203,7 +430,7 @@ do {
     case ("activity", _): command = "activity.list"
     case ("state", _): command = "state.dump"
     case ("hide", _): command = "app.hide"
-    case ("show", _): command = "app.show"
+    case ("show", nil): command = "app.show"
     case ("toggle", _): command = "app.toggle"
     case ("to-fine", _):
         command = "session.toFine"
@@ -221,9 +448,19 @@ do {
     case ("notch", "show"): command = "attention.show"
     case ("notch", "hide"): command = "attention.hide"
     case ("notch", "status"): command = "attention.status"
-    default: throw CLIError(message: "unknown command: \(positional.joined(separator: " "))\n\n\(usage)")
+    default: throw CLIError(message: "unknown command: \(positional.joined(separator: " "))\n\n\(appUsage)")
     }
-    let response = try send(command, args)
+    var response: [String: Any]
+    do {
+        response = try send(command, args)
+    } catch let error as CLIError where command == "session.reveal" {
+        // "그거 내 화면에 띄워"의 그거가 세션이 아니라 워크스페이스일 수 있다(사이드바 이름·--ws 값).
+        guard let target = args["target"] as? String,
+              let shown = try? send("ws.select", ["ws": target.split(separator: "@").first.map(String.init) ?? target]) else {
+            throw CLIError(message: error.message.replacingOccurrences(of: "sm: ", with: "") + "\n  세션도 사이드바 워크스페이스도 아니다 — sm ls(세션), sm ws(워크스페이스)")
+        }
+        response = shown; command = "ws.select"
+    }
     let result = response["result"] ?? NSNull()
     if wantJSON {
         let data = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
@@ -242,12 +479,7 @@ do {
 // MARK: - 사람이 읽는 출력
 
 func render(command: String, result: Any) -> String {
-    func table(_ rows: [[String]]) -> String {
-        guard let first = rows.first else { return "(none)" }
-        var widths = Array(repeating: 0, count: first.count)
-        for row in rows { for (i, c) in row.enumerated() where i < widths.count { widths[i] = max(widths[i], c.count) } }
-        return rows.map { row in row.enumerated().map { i, c in i == row.count - 1 ? c : c.padding(toLength: widths[i], withPad: " ", startingAt: 0) }.joined(separator: "  ") }.joined(separator: "\n")
-    }
+    func table(_ rows: [[String]]) -> String { alignedTable(rows) }
     func short(_ id: Any?) -> String { String((id as? String ?? "").prefix(8)).lowercased() }
     // NSNumber는 Bool로도 브리징되므로 CFBoolean인지 먼저 가려야 0/1이 yes/no로 둔갑하지 않는다
     func str(_ v: Any?) -> String {

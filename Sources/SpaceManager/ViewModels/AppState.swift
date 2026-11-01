@@ -194,14 +194,18 @@ class AppState: ObservableObject {
 
     // MARK: - Workspace Management
 
+    /// `layoutName`: 세션 층 배치 이름에 묶는다(사이드바 이름을 바꿔도 같은 배치를 보이게).
+    /// `select: false`: 에이전트가 만든 워크스페이스 — SEOL이 보던 워크스페이스를 바꾸지 않고 목록에만 넣는다.
     @discardableResult
-    func createWorkspace(rootPath: String, customName: String? = nil, remoteHost: String? = nil) -> String? {
+    func createWorkspace(rootPath: String, customName: String? = nil, remoteHost: String? = nil,
+                         layoutName: String? = nil, select: Bool = true) -> String? {
         let path = ((rootPath.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath as NSString).standardizingPath
         let host = remoteHost?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let workspace = Workspace(rootPath: path, customName: customName, remoteHost: host?.isEmpty == false ? host : nil)
+        var workspace = Workspace(rootPath: path, customName: customName, remoteHost: host?.isEmpty == false ? host : nil)
+        if let layoutName, !layoutName.isEmpty { workspace.tmuxSessionName = layoutName }
         if let error = workspace.executionLocationError(host: workspace.remoteHost) { return error }
         workspaces.append(workspace)
-        selectWorkspace(workspace)
+        if select { selectWorkspace(workspace) } else { persistWindowState() }
         return nil
     }
 
