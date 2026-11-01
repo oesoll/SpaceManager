@@ -193,6 +193,27 @@ enum ControlCommands {
         }
     }
 
+    /// `sm to-fine NAME[@HOST]`: 그 세션을 보이는 sm 패널을 Fine으로 옮긴다(패널 메뉴 "Fine으로 옮기기"와 같다).
+    private static func moveToFine(_ target: String, completion: @escaping (ControlResponse) -> Void) {
+        SessionLayer.run(["where", target, "--json"]) { result in
+            guard case .success(let data) = result,
+                  let found = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let host = found["host"] as? String, let workspace = found["workspace"] as? String,
+                  let pane = found["pane"] as? String else {
+                completion(.error("\(target) is not shown in any sm pane")); return
+            }
+            let key = LayoutDirectory.key(workspace: workspace, host: host)
+            guard let layout = LayoutDirectory.shared.layouts[key],
+                  let entry = liveWindows().first(where: { entry in
+                      entry.state.workspaces.contains { entry.state.layoutKey(for: $0) == key }
+                  }) else { completion(.error("no sm window shows workspace \(key)")); return }
+            entry.state.moveLayoutPaneToFine(pane, in: layout) { failure in
+                if let failure { completion(.error(failure)) }
+                else { completion(.ok(["moved": target, "pane": pane, "workspace": workspace])) }
+            }
+        }
+    }
+
     /// sm 패널에서 세션을 연다. 어디 있는지는 세션 층이 안다(원격도, 이름의 대소문자도 맞춰 준다).
     private static func revealInSM(_ target: String, completion: @escaping (ControlResponse) -> Void) {
         SessionLayer.run(["where", target, "--json"]) { result in
@@ -275,6 +296,11 @@ enum ControlCommands {
             try WindowProbe.writePNG(image, to: path)
             completion(.ok(["path": path, "width": image.width, "height": image.height,
                             "scale": nsWindow.backingScaleFactor]))
+            return true
+
+        case "session.toFine":
+            guard let target = r.string("target"), !target.isEmpty else { throw fail("usage: sm to-fine NAME[@HOST]") }
+            moveToFine(target, completion: completion)
             return true
 
         case "session.reveal":

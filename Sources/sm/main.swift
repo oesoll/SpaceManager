@@ -39,6 +39,8 @@ sm — SpaceManager를 터미널에서 조작한다
 
   sm reveal NAME[@HOST]               그 에이전트가 보이는 곳을 앞으로(sm 패널, 키 입력까지 — 또는 그 세션을
                                       보는 Fine 탭). 어디에도 없으면 새 탭에 붙인다. 노치 알림을 누르면 이 길로 간다
+  sm to-fine NAME[@HOST]              그 세션을 보이는 패널을 Fine으로 옮긴다(Fine 탭이 붙고 패널은 닫힘, 세션은 그대로).
+                                      반대 방향은 fine move <탭> sm
   sm notify <message> [--title T] [--state waiting|blocked|error|working|done|unknown] [--id KEY]
             [--source sm:NAME|%PANE|fine:TAB] [--host H] [--workspace W]
                                       화면 노치에 알림을 올린다(같은 --id면 그 항목을 바꾼다). 제어 소켓의
@@ -199,6 +201,10 @@ do {
         if let rect = flags["rect"] { args["rect"] = rect }
     case ("activity", _): command = "activity.list"
     case ("state", _): command = "state.dump"
+    case ("to-fine", _):
+        command = "session.toFine"
+        guard let target = sub else { throw CLIError(message: "usage: sm to-fine NAME[@HOST]") }
+        args["target"] = target
     case ("notify", _):
         command = "attention.post"
         let message = ([sub].compactMap { $0 } + rest).joined(separator: " ")

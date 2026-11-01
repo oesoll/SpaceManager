@@ -416,7 +416,8 @@ struct LayoutTabView: View {
                      onZoom: { appState.zoomLayoutPane(id, in: layout) },
                      showsLegend: multiple,
                      legendAction: migrateAction(for: id, session: session),
-                     onMoveToFine: layout.panes[id]?.session != nil && !isInTmux(id)
+                     // Fine 탭은 Claude·Codex만 보인다 — 에이전트(peer 행)가 있는 패널에만.
+                     onMoveToFine: agent(for: id) != nil && !isInTmux(id)
                         ? { appState.moveLayoutPaneToFine(id, in: layout) } : nil,
                      onHoverFocus: isShown && multiple && pending == nil && drag == nil ? {
                          guard focused != id else { return }

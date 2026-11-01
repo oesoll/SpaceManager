@@ -276,19 +276,22 @@ extension AppState {
     /// 패널의 세션을 Fine으로 옮긴다(SEOL 11/01: "에이전트를 sm에서 Fine으로, 역방향으로도"). Fine이 그 세션에
     /// 붙은 탭을 연 뒤에 이 패널을 닫는다 — 패널 닫기는 세션을 끝내지 않으므로 세션은 그대로 이어지고 보는
     /// 앱만 바뀐다. 탭의 마지막 패널이면 탭을 닫고, 워크스페이스의 마지막 탭이면 패널을 남겨 둔다.
-    func moveLayoutPaneToFine(_ pane: String, in layout: WorkspaceLayout) {
-        guard let name = layout.panes[pane]?.session else { return }
+    /// `completion`이 없으면(화면에서 누른 경우) 실패를 창으로 알린다. 있으면(`sm to-fine`) 실패 까닭을 넘긴다.
+    func moveLayoutPaneToFine(_ pane: String, in layout: WorkspaceLayout, completion: ((String?) -> Void)? = nil) {
+        guard let name = layout.panes[pane]?.session else { completion?("pane \(pane) shows no session"); return }
         let target = layout.host == PeerDirectory.shared.localHostName ? name : name + "@" + layout.host
         MainActor.assumeIsolated {
             FineControl.attach(target) { [weak self] failure in
                 guard let self else { return }
                 if let failure {
+                    if let completion { return completion(failure) }
                     let alert = NSAlert()
                     alert.messageText = "\(name)을 Fine으로 옮기지 못했습니다"
                     alert.informativeText = failure
                     alert.runModal()
                     return
                 }
+                defer { completion?(nil) }
                 let current = LayoutDirectory.shared.layouts[LayoutDirectory.key(workspace: layout.workspace, host: layout.host)] ?? layout
                 guard let tab = current.tab(containing: pane) else { return }
                 if tab.root.paneIDs.count > 1 {
@@ -303,7 +306,9 @@ extension AppState {
     /// 탭 칩의 "Fine으로 옮기기": 패널이 하나뿐이고 그 패널이 세션을 보일 때.
     func movableToFine(tab: WorkspaceLayout.Tab, in layout: WorkspaceLayout) -> String? {
         let panes = tab.root.paneIDs
-        guard panes.count == 1, let pane = panes.first, layout.panes[pane]?.session != nil else { return nil }
+        guard panes.count == 1, let pane = panes.first, let name = layout.panes[pane]?.session,
+              // Fine 탭은 Claude·Codex만 보인다(셸 세션은 Fine이 받지 않는다).
+              PeerDirectory.shared.agents.contains(where: { $0.name == name && $0.host == layout.host }) else { return nil }
         return pane
     }
 
