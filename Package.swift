@@ -8,7 +8,7 @@ import PackageDescription
 let sibling = Context.packageDirectory + "/../GhosttyTerminal/Package.swift"
 let terminal: Package.Dependency = FileManager.default.fileExists(atPath: sibling)
     ? .package(path: "../GhosttyTerminal")
-    : .package(url: "https://github.com/oesoll/GhosttyTerminal.git", from: "0.1.0")
+    : .package(url: "https://github.com/oesoll/GhosttyTerminal.git", from: "0.2.0")
 
 let package = Package(
     name: "SpaceManager",
