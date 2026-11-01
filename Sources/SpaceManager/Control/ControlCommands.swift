@@ -182,6 +182,17 @@ enum ControlCommands {
                 "generating": Array(scanner.generatingDirectories).sorted(),
             ]
 
+        case "app.hide":
+            NSApp.hide(nil)
+            return ["hidden": true]
+        case "app.show":
+            StatusBarToggle.shared.show()
+            return ["hidden": NSApp.isHidden]
+        case "app.toggle":
+            // 메뉴 막대 아이콘을 누른 것과 같다.
+            StatusBarToggle.shared.toggle()
+            return ["hidden": NSApp.isHidden]
+
         case "state.dump":
             let data = try JSONEncoder.pretty.encode(WorkspaceStorage.shared.windowStates)
             return try JSONSerialization.jsonObject(with: data)

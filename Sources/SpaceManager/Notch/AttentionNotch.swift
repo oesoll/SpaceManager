@@ -420,6 +420,8 @@ final class AttentionNotch: ObservableObject {
         window.level = .statusBar
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.isReleasedWhenClosed = false; window.hidesOnDeactivate = false
+        // sm을 숨겨도(메뉴 막대 아이콘, ⌘H) 노치는 남는다 — 노치는 sm 창이 아니라 화면의 일부다.
+        window.canHide = false
         window.acceptsMouseMovedEvents = true
         window.title = title
         return window
