@@ -163,6 +163,10 @@ private struct TabSurfaceContent: View {
         .onChange(of: remoteLayoutKeys) { _, keys in
             layouts.setRemote(keys, owner: appState.windowStateId)
         }
+        // 가려진 지 오래된 세션 패널의 attach를 내린다(LayoutTerminals.parkHidden). 분 단위면 충분하다.
+        .onReceive(Timer.publish(every: 60, tolerance: 10, on: .main, in: .common).autoconnect()) { _ in
+            appState.parkHiddenLayoutTerminals()
+        }
         .onChange(of: layouts.layouts) { _, _ in
             appState.pruneLayoutTerminals()
             // 파일이 따라잡았으면 화면 쪽 임시 상태를 걷는다.

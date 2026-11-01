@@ -73,7 +73,36 @@ final class LayoutTerminals {
         for (key, session) in sessions where !live.contains(key) {
             session.cleanup()
             sessions[key] = nil
+            lastDisplayed[key] = nil
         }
+    }
+
+    /// 세션 패널이 마지막으로 화면에 보인 때. 키는 `session(for:)`과 같은 "배치 키/패널".
+    private var lastDisplayed: [String: Date] = [:]
+    /// 가려진 세션 패널이 attach를 내리기까지. 세션 층은 보는 창이 하나도 없는 워크스페이스만 65분 쉰 뒤 재우므로
+    /// (SEOL 11/01: "꺼지는 단위는 워크스페이스 단위로") 가려진 패널이 attach를 쥐고 있으면 아무것도 잠들지 못한다.
+    /// 그렇다고 가려지자마자 내리면 탭·워크스페이스를 오갈 때마다 다시 붙느라 늦다(SEOL이 짚은 전환 지연).
+    /// 10분이면 방금 본 탭은 바로 보이고, 잠들기(65분)는 막지 않는다.
+    static let parkAfter: TimeInterval = 600
+
+    /// 화면에 보이는 패널(`displayed`)은 시각을 적고, 가려진 지 `grace`가 지난 세션 패널은 attach를 내린다.
+    /// 패널을 다시 보면 attach가 다시 뜨고, 세션 층이 잠든 세션을 깨우며 마지막 화면부터 보인다. 셸 패널은 내리면
+    /// 그 셸이 끝나므로 두고, 세션 층의 세션을 보이는 패널만 내린다.
+    func parkHidden(displayed: Set<String>, now: Date = Date(), grace: TimeInterval = LayoutTerminals.parkAfter) {
+        for key in displayed { lastDisplayed[key] = now }
+        let attached = Set(sessions.filter { _, session in
+            if case .agent = session.attachment { return session.terminalView != nil }
+            return false
+        }.keys)
+        for key in Self.toPark(attached: attached, displayed: displayed, lastDisplayed: lastDisplayed, now: now, grace: grace) {
+            sessions[key]?.cleanup()
+        }
+    }
+
+    /// 내릴 패널: attach가 붙은 세션 패널 가운데 지금 안 보이고, 마지막으로 보인 지 `grace`가 지난 것.
+    static func toPark(attached: Set<String>, displayed: Set<String>, lastDisplayed: [String: Date],
+                       now: Date, grace: TimeInterval) -> [String] {
+        attached.subtracting(displayed).filter { now.timeIntervalSince(lastDisplayed[$0] ?? .distantPast) >= grace }.sorted()
     }
 
     var all: [TerminalSession] { Array(sessions.values) }
@@ -392,6 +421,21 @@ extension AppState {
     }
 
     /// 배치에 있는 모든 패널의 터미널만 남긴다.
+    /// 이 창이 지금 보여 주는 배치 패널(고른 워크스페이스의 앞에 나온 탭)의 키.
+    /// 창이 화면에 실제로 보이지 않으면(sm을 숨김, 최소화, 다른 창에 완전히 가려짐) 아무것도 보이지 않는 것이다.
+    func displayedLayoutPanes(directory: LayoutDirectory = .shared, window: NSWindow? = nil) -> Set<String> {
+        if let window, !window.occlusionState.contains(.visible) { return [] }
+        guard windowKind == .workspace, let workspace = selectedWorkspace,
+              let layout = layout(for: workspace, directory: directory), let tab = displayedTab(of: layout) else { return [] }
+        let prefix = LayoutDirectory.key(workspace: layout.workspace, host: layout.host) + "/"
+        return Set(tab.root.paneIDs.map { prefix + $0 })
+    }
+
+    func parkHiddenLayoutTerminals() {
+        let window = WorkspaceWindowRegistry.shared.liveEntries().first { $0.state === self }?.window
+        layoutTerminals.parkHidden(displayed: displayedLayoutPanes(window: window))
+    }
+
     func pruneLayoutTerminals(directory: LayoutDirectory = .shared) {
         var live = Set<String>()
         for layout in directory.layouts.values {

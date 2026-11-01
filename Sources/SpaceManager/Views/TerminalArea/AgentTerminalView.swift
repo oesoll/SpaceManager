@@ -83,11 +83,19 @@ struct SessionTerminalWrapper: NSViewRepresentable {
         session.palette = colorScheme == .dark ? .workspaceDark : .workspaceLight
     }
 
+    /// 겹쳐 둔 탭 가운데 가려진 세션 패널은 처음 보일 때까지 attach를 띄우지 않는다. 앱을 켜거나 워크스페이스를
+    /// 고를 때 그 안 모든 탭의 세션이 한꺼번에 깨지 않게(세션 층은 attach가 열리면 잠든 세션을 깨운다).
+    private var waitsUntilShown: Bool {
+        guard !shown, session.terminalView == nil, case .agent = session.attachment else { return false }
+        return true
+    }
+
     func makeNSView(context: Context) -> TerminalHostView {
         let host = TerminalHostView()
         syncPalette()
         terminalLayout.attach(host)
         host.animatesTransitions = !reduceMotion
+        guard !waitsUntilShown else { return host }
         let terminal = session.getOrCreateTerminal()
         terminal.isShown = shown
         host.show(terminal)
@@ -98,6 +106,7 @@ struct SessionTerminalWrapper: NSViewRepresentable {
         syncPalette()
         terminalLayout.attach(host)
         host.animatesTransitions = !reduceMotion
+        guard !waitsUntilShown else { return }
         let terminal = session.getOrCreateTerminal()
         terminal.isShown = shown
         let changed = host.show(terminal)
