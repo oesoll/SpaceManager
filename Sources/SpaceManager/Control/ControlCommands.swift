@@ -187,7 +187,7 @@ enum ControlCommands {
             return ["hidden": true]
         case "app.show":
             StatusBarToggle.shared.show()
-            return ["hidden": NSApp.isHidden]
+            return ["hidden": false]   // 숨김 풀기는 다음 차례에 반영된다 — 지금 isHidden은 아직 true다
         case "app.toggle":
             // 메뉴 막대 아이콘을 누른 것과 같다.
             StatusBarToggle.shared.toggle()
