@@ -278,7 +278,7 @@ extension AppState {
         context.error = nil
         AgentPickerDefaults(engine: spec.engine, modelID: spec.modelID, effort: spec.effort).save()
         let engineArgs = Array(SessionLayer.spawnArguments(spec, pane: nil, workingDirectory: layout.cwd).drop(while: { $0 != "--" }))
-        runLayoutCommand(["tab", "new", "--spawn", spec.name, "--kind", spec.engine.rawValue] + engineArgs, layout: layout) { result in
+        runLayoutCommand(["tab", "new", "--focus", "--spawn", spec.name, "--kind", spec.engine.rawValue] + engineArgs, layout: layout) { result in
             self.finishNewTab(result, layout: layout, context: context)
         }
     }
@@ -287,7 +287,7 @@ extension AppState {
         guard let context = layoutInteraction.pendingContext else { return }
         context.isLaunching = true
         context.error = nil
-        runLayoutCommand(["tab", "new", "--attach", session.name], layout: layout) { result in
+        runLayoutCommand(["tab", "new", "--focus", "--attach", session.name], layout: layout) { result in
             self.finishNewTab(result, layout: layout, context: context)
         }
     }
@@ -387,7 +387,7 @@ extension AppState {
         AgentPickerDefaults(engine: spec.engine, modelID: spec.modelID, effort: spec.effort).save()
         let spawn = SessionLayer.spawnArguments(spec, pane: nil, workingDirectory: layout.cwd)
         let engineArgs = Array(spawn.drop(while: { $0 != "--" }))
-        let args = ["split", pending.beside, pending.dir == .row ? "--right" : "--down",
+        let args = ["split", pending.beside, pending.dir == .row ? "--right" : "--down", "--focus",
                     "--spawn", spec.name, "--kind", spec.engine.rawValue]
         runLayoutCommand(args + engineArgs, layout: layout) { result in
             self.finishPending(result, context: context)
@@ -399,7 +399,7 @@ extension AppState {
         guard let pending = layoutInteraction.pending, let context = layoutInteraction.pendingContext else { return }
         context.isLaunching = true
         context.error = nil
-        runLayoutCommand(["split", pending.beside, pending.dir == .row ? "--right" : "--down", "--attach", session.name],
+        runLayoutCommand(["split", pending.beside, pending.dir == .row ? "--right" : "--down", "--focus", "--attach", session.name],
                          layout: layout) { result in
             self.finishPending(result, context: context)
         }

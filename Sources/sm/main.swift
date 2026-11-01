@@ -226,7 +226,7 @@ func newWorkspace(_ rest: [String], json: Bool) -> Never {
     let remote = parts.count == 2 && parts[1] != "mac" && parts[1] != "local" ? parts[1] : nil
     // 원격은 그 기기의 폴더다. 안 주면 그 기기의 홈(~)이 아니라 같은 이름의 ~/폴더를 가정하지 않고, 홈에 둔다.
     let dir = cwd ?? (remote == nil ? FileManager.default.currentDirectoryPath : "~")
-    var made = runLayer(["ws", "new", remote == nil ? parts[0] : target, "--cwd", dir, "--json"])
+    var made = runLayer(["ws", "new", remote == nil ? parts[0] : target, "--cwd", dir, "--no-app", "--json"])
     var existed = false
     if made.status != 0 {
         guard made.err.contains("workspace exists") else { fail(made.err.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "sm: ", with: "")) }
@@ -267,6 +267,104 @@ func remoteAlias(forHost host: String) -> String {
         if parts.count == 2, parts[0] == host { return parts[1] }
     }
     return host
+}
+
+
+// MARK: - 워크스페이스(사이드바와 배치를 함께)
+
+struct SidebarEntry { let id: String; let window: String; let name: String; let layout: String; let host: String; let alias: String; let selected: Bool }
+
+func sidebarEntries() -> [SidebarEntry]? {
+    guard let rows = askAppIfRunning("ws.list") as? [[String: Any]] else { return nil }
+    return rows.map { w in
+        let alias = w["remoteHost"] as? String ?? ""
+        return SidebarEntry(id: w["id"] as? String ?? "", window: w["window"] as? String ?? "", name: w["name"] as? String ?? "",
+                            layout: w["tmuxSession"] as? String ?? "", host: alias.isEmpty ? "mac" : layerHost(forAlias: alias),
+                            alias: alias, selected: w["selected"] as? Bool ?? false)
+    }
+}
+
+/// 사이드바 항목 하나: `--ws` 값(saengjon, flat@arch), 배치 이름, SEOL이 부르는 이름(인체안내서) 무엇으로든.
+func findSidebar(_ ref: String, in entries: [SidebarEntry]) -> SidebarEntry? {
+    let parts = ref.split(separator: "@", maxSplits: 1).map(String.init)
+    if parts.count == 2 { return entries.first { $0.layout == parts[0] && $0.host == layerHost(forAlias: parts[1]) } }
+    return entries.first { $0.layout == ref } ?? entries.first { $0.name == ref }
+        ?? entries.first { $0.name.lowercased() == ref.lowercased() } ?? entries.first { $0.id.lowercased().hasPrefix(ref.lowercased()) && ref.count >= 4 }
+}
+
+func wsRef(_ e: SidebarEntry) -> String { e.host == "mac" ? e.layout : e.layout + "@" + e.host }
+
+func requireSidebar(_ ref: String) -> (SidebarEntry, [SidebarEntry]) {
+    guard let entries = sidebarEntries() else { fail("sm 앱이 꺼져 있다 — 사이드바는 앱이 켜져 있어야 바꾼다 (open -a WorkspaceManager)") }
+    guard let entry = findSidebar(ref, in: entries) else {
+        let names = entries.map { $0.name == $0.layout ? wsRef($0) : "\(wsRef($0))(\($0.name))" }
+        fail("사이드바에 \(ref) 워크스페이스가 없다 — 있는 것: " + names.joined(separator: ", "))
+    }
+    return (entry, entries)
+}
+
+/// 바꾼 뒤 그 창의 사이드바 순서를 한 줄로(* = SEOL이 보는 것).
+func printSidebarOrder(window: String) {
+    let order = (sidebarEntries() ?? []).filter { $0.window == window }
+    print("사이드바(창 \(window.prefix(8).lowercased())): " + order.map { ($0.selected ? "*" : "") + $0.name }.joined(separator: " · "))
+}
+
+func appCall(_ command: String, _ args: [String: Any]) -> Any {
+    do { return try send(command, args)["result"] ?? NSNull() }
+    catch let error as CLIError { fail(error.message) }
+    catch { fail("\(error)") }
+}
+
+func removeWorkspace(_ ref: String, json: Bool) -> Never {
+    let entries = sidebarEntries()
+    let entry = entries.flatMap { findSidebar(ref, in: $0) }
+    let target = entry.map(wsRef) ?? ref
+    let removed = runLayer(["ws", "rm", target, "--no-app", "--json"])
+    let layer = (try? JSONSerialization.jsonObject(with: removed.out)) as? [String: Any]
+    if removed.status != 0 && entry == nil {
+        fail(removed.err.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "sm: ", with: "")
+             + (entries == nil ? "" : " — 사이드바에도 없다 (sm ws)"))
+    }
+    if let entry { _ = appCall("ws.delete", ["ws": entry.id, "window": entry.window]) }
+    let sessions = layer?["sessions"] as? [String] ?? []
+    if json {
+        let value: [String: Any] = ["ws": target, "layout_removed": removed.status == 0, "sidebar_removed": entry != nil, "sessions": sessions]
+        let data = (try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+        print(String(decoding: data, as: UTF8.self)); exit(0)
+    }
+    var line = "지움: \(target)"
+    line += removed.status == 0 ? " · 배치" : " · (배치는 없었다)"
+    line += entry != nil ? " · 사이드바" : ""
+    if !sessions.isEmpty { line += " — 세션은 뒤에서 계속 돈다: " + sessions.joined(separator: ", ") + " (끝내려면 sm stop NAME)" }
+    print(line)
+    if let entry { printSidebarOrder(window: entry.window) }
+    exit(0)
+}
+
+/// 사이드바 순서: INDEX(0부터) | first | last | up | down | --before WS | --after WS.
+func moveWorkspace(_ rest: [String]) -> Never {
+    guard rest.count >= 2 else { fail("usage: sm ws move WS INDEX|first|last|up|down|--before WS|--after WS") }
+    let (entry, entries) = requireSidebar(rest[0])
+    var order = entries.filter { $0.window == entry.window }
+    guard let from = order.firstIndex(where: { $0.id == entry.id }) else { fail("사이드바 순서를 읽지 못했다") }
+    order.remove(at: from)
+    let to: Int
+    switch rest[1] {
+    case "first", "top": to = 0
+    case "last", "bottom": to = order.count
+    case "up": to = max(0, from - 1)
+    case "down": to = min(order.count, from + 1)
+    case "--before", "--after":
+        guard rest.count >= 3, let other = findSidebar(rest[2], in: order), let j = order.firstIndex(where: { $0.id == other.id }) else {
+            fail("sm ws move: \(rest.count >= 3 ? rest[2] + "가 같은 창 사이드바에 없다" : "--before/--after 뒤에 워크스페이스")")
+        }
+        to = rest[1] == "--before" ? j : j + 1
+    case let n where Int(n) != nil: to = max(0, min(order.count, Int(n)!))
+    default: fail("sm ws move WS INDEX|first|last|up|down|--before WS|--after WS (받은 것: \(rest[1]))")
+    }
+    _ = appCall("ws.move", ["ws": entry.id, "window": entry.window, "index": to])
+    printSidebarOrder(window: entry.window)
+    exit(0)
 }
 
 func printHelp() -> Never {
@@ -325,7 +423,25 @@ case "ws":
         var args = [layoutName, "--cwd", path]
         if let host, !["local", "none", "-"].contains(host) { args += ["--host", host] }
         newWorkspace(args, json: wantsJSON)
-    case "select", "delete", "rename", "tmux-name", "remote", "move":
+    case "rm", "remove", "delete":
+        guard rest.count == 2 else { fail("usage: sm ws rm WS   (세션은 끝나지 않는다 — 끝내려면 sm stop NAME)") }
+        removeWorkspace(rest[1], json: wantsJSON)
+    case "move":
+        moveWorkspace(Array(rest.dropFirst()))
+    case "rename":
+        guard rest.count == 3 else { fail("usage: sm ws rename WS 새이름   (SEOL이 보는 이름만 바뀐다 — --ws 값은 그대로)") }
+        let (entry, _) = requireSidebar(rest[1])
+        _ = appCall("ws.rename", ["ws": entry.id, "window": entry.window, "name": rest[2]])
+        print("이름: \(entry.name) → \(rest[2]) (--ws \(wsRef(entry))는 그대로)")
+        printSidebarOrder(window: entry.window)
+        exit(0)
+    case "select", "show":
+        guard rest.count == 2 else { fail("usage: sm ws select WS   (SEOL 화면에 그 워크스페이스를 띄운다 — sm show WS와 같다)") }
+        let (entry, _) = requireSidebar(rest[1])
+        _ = appCall("ws.select", ["ws": entry.id, "window": entry.window])
+        printSidebarOrder(window: entry.window)
+        exit(0)
+    case "tmux-name", "remote":
         note("ws \(rest[0])는 앱 명령이다 — 앞으로 sm app ws \(rest[0]) … (이번엔 그대로 한다)")
     default:
         execLayer(rewriteWorkspaceFlags(argv))

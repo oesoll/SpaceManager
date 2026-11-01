@@ -215,6 +215,11 @@ class AppState: ObservableObject {
 
     func renameWorkspace(_ workspace: Workspace, to newName: String?) {
         guard let index = workspaceIndex(id: workspace.id) else { return }
+        // 배치 이름은 사이드바 이름에서 나온다(따로 정하지 않았으면). 이름만 바꾸면 다른 배치를 찾아 화면이 비므로,
+        // 지금 이름을 배치 이름으로 묶어 둔 뒤 바꾼다.
+        if workspaces[index].tmuxSessionName?.isEmpty ?? true {
+            workspaces[index].tmuxSessionName = workspaces[index].effectiveTmuxSessionName
+        }
         workspaces[index].rename(to: newName)
         if selectedWorkspace?.id == workspace.id {
             selectedWorkspace = workspaces[index]

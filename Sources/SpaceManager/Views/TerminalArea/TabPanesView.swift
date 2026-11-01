@@ -394,6 +394,10 @@ struct LayoutTabView: View {
         // 곳이 사라져, 탭을 바꾼 뒤 한 번 눌러야 글자가 들어갔다.
         .onAppear { if isShown { focusKeyboard() } }
         .onChange(of: isShown) { _, shown in if shown { focusKeyboard() } }
+        // 테두리와 키가 같은 패널을 가리키게. 세션 층은 누가 그렇게 하라고 할 때만 포커스를 옮긴다 — `sm focus`,
+        // 포커스된 패널 닫기, SEOL의 클릭·호버. 배치만 바꾸는 명령(split·move·arrange)은 옮기지 않으니(11/01),
+        // 에이전트가 패널을 붙여도 SEOL이 치던 패널의 키는 그대로다.
+        .onChange(of: focused) { _, _ in if isShown { focusKeyboard() } }
     }
 
     private func focusKeyboard() {

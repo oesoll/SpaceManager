@@ -33,7 +33,7 @@ extension AppState {
                 }
                 if !openedTab {
                     openedTab = true
-                    runLayoutCommand(["tab", "new", "--attach", name], layout: layout) { result in
+                    runLayoutCommand(["tab", "new", "--focus", "--attach", name], layout: layout) { result in
                         if case .failure(let failure) = result { finish(.failure(failure)) }
                         // 성공이면 배치 파일(원격은 watch)이 곧 새 탭을 가져온다 — 아래에서 다시 찾는다.
                     }
