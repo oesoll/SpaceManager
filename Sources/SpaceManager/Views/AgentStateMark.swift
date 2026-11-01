@@ -71,7 +71,7 @@ struct PaneBadge: Equatable {
     /// 지금 상태가 된 시각. 손이 갈 상태(막힘·오류)에서만 경과 시간을 보인다.
     var since: Date?
     /// 이 패널의 노치 알림. 있으면 이름표 끝에 지우기(×)가 붙는다 — 노치의 ×와 같은 일을 한다.
-    var notice: NotchNotice?
+    var notice: AttentionItem?
 
     init(title: String, attention: AgentAttention? = nil, detail: String? = nil, since: Date? = nil) {
         self.title = title
@@ -80,7 +80,7 @@ struct PaneBadge: Equatable {
         self.since = since
     }
 
-    init(agent: PeerAgent, attention: AgentAttention, notice: NotchNotice? = nil, title: String? = nil) {
+    init(agent: PeerAgent, attention: AgentAttention, notice: AttentionItem? = nil, title: String? = nil) {
         self.title = title ?? agent.name
         self.attention = attention
         self.since = agent.since
@@ -105,8 +105,8 @@ struct PaneBadge: Equatable {
     }
 
     /// 에이전트가 없는 패널의 터미널 알림.
-    init(title: String, notice: NotchNotice) {
-        self.init(title: title, attention: notice.state == "error" ? .error : .blocked,
+    init(title: String, notice: AttentionItem) {
+        self.init(title: title, attention: notice.state == .error ? .error : .blocked,
                   detail: notice.shortLabel, since: notice.updatedAt)
         self.notice = notice
     }

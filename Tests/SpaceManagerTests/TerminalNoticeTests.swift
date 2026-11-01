@@ -12,8 +12,8 @@ final class TerminalNoticeTests: XCTestCase {
         let realHome = URL(fileURLWithPath: String(cString: getpwuid(getuid())!.pointee.pw_dir))
         try XCTSkipIf(URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL == realHome.standardizedFileURL,
                       "run through scripts/test-isolated.sh — this would talk to the real Fine")
-        try FileManager.default.createDirectory(at: FineNotch.home, withIntermediateDirectories: true)
-        let log = FineNotch.home.appendingPathComponent("received.jsonl")
+        try FileManager.default.createDirectory(at: FineControl.home, withIntermediateDirectories: true)
+        let log = FineControl.home.appendingPathComponent("received.jsonl")
         try? FileManager.default.removeItem(at: log)
         let server = Process()
         server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -25,9 +25,9 @@ final class TerminalNoticeTests: XCTestCase {
         while True:
             c, _ = s.accept(); line = c.makefile('rb').readline()
             open(log, 'ab').write(line); c.sendall(b'{"ok": true, "result": {}}\\n'); c.close()
-        """, FineNotch.socket, log.path]
+        """, FineControl.socket, log.path]
         try server.run()
-        defer { server.terminate(); try? FileManager.default.removeItem(at: FineNotch.file) }
+        defer { server.terminate(); try? FileManager.default.removeItem(at: FineControl.file) }
         func requests() -> [[String: Any]] {
             ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n").compactMap {
                 try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
@@ -77,8 +77,8 @@ final class TerminalNoticeTests: XCTestCase {
         let item: [String: Any] = ["id": "n1", "key": session.terminalNoticeKey, "host": "arch-elsewhere", "source": "sm:qa",
                                    "fingerprint": "", "title": "qa", "message": "빌드가 끝났어요", "state": "waiting",
                                    "updatedAt": Date().timeIntervalSinceReferenceDate]
-        try JSONSerialization.data(withJSONObject: [item]).write(to: FineNotch.file, options: .atomic)
-        PeerDirectory.shared.reloadNotch()
+        try JSONSerialization.data(withJSONObject: [item]).write(to: FineControl.file, options: .atomic)
+        NotchOwner.shared.reloadFine()
         XCTAssertNotNil(PeerDirectory.shared.terminalNotice(for: session), "sm does not show the pane's notice")
 
         // SEOL이 그 패널에 친다 → 노치에서 내려간다(done).

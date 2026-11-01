@@ -285,7 +285,8 @@ struct TabStripBar: View {
             WorkspaceTabStrip.Item(id: tab.id, name: tab.name, isActive: tab.id == active,
                                    attention: appState.layoutRollup(tab: tab, in: layout, directory: peers),
                                    isZoomed: tab.zoom != nil, canClose: layout.tabs.count > 1,
-                                   notices: appState.layoutNotices(tab: tab, in: layout, directory: peers).map(\.id))
+                                   notices: appState.layoutNotices(tab: tab, in: layout, directory: peers).map(\.id),
+                                   canMoveToFine: appState.movableToFine(tab: tab, in: layout) != nil)
         }
         if picking {
             items.append(.init(id: "pending-tab", name: "새 탭", isActive: true, isPending: true, canClose: false))
@@ -300,6 +301,11 @@ struct TabStripBar: View {
             onClose: { appState.closeLayoutTab($0, in: layout) },
             onRename: { appState.renameLayoutTab($0, to: $1, in: layout) },
             onMove: { appState.moveLayoutTab($0, to: $1, in: layout) },
+            onMoveToFine: { id in
+                guard let tab = layout.tabs.first(where: { $0.id == id }),
+                      let pane = appState.movableToFine(tab: tab, in: layout) else { return }
+                appState.moveLayoutPaneToFine(pane, in: layout)
+            },
             onNew: { appState.beginLayoutNewTab(in: layout) })
     }
 

@@ -19,6 +19,8 @@ struct WorkspaceTabStrip: View {
         var canClose = true
         /// 이 탭 패널들의 노치 알림 id. 패널이 하나뿐인 탭은 이름표(와 그 ×)가 없어서 칩 메뉴로 지운다.
         var notices: [String] = []
+        /// 패널이 하나뿐인 탭을 Fine으로 옮길 수 있는가(이름표 메뉴가 없는 탭).
+        var canMoveToFine = false
     }
 
     let items: [Item]
@@ -26,6 +28,7 @@ struct WorkspaceTabStrip: View {
     var onClose: ((String) -> Void)?
     var onRename: ((String, String) -> Void)?
     var onMove: ((String, Int) -> Void)?
+    var onMoveToFine: ((String) -> Void)?
     let onNew: () -> Void
 
     @State private var dragging: String?
@@ -46,7 +49,8 @@ struct WorkspaceTabStrip: View {
                             TabChip(item: item,
                                     onSelect: { onSelect(item.id) },
                                     onClose: item.canClose ? onClose.map { close in { close(item.id) } } : nil,
-                                    onRename: onRename.map { rename in { rename(item.id, $0) } })
+                                    onRename: onRename.map { rename in { rename(item.id, $0) } },
+                                    onMoveToFine: item.canMoveToFine ? onMoveToFine.map { move in { move(item.id) } } : nil)
                                 .id(item.id)
                                 .onDrag {
                                     dragging = item.id
@@ -78,6 +82,7 @@ private struct TabChip: View {
     let onSelect: () -> Void
     let onClose: (() -> Void)?
     let onRename: ((String) -> Void)?
+    var onMoveToFine: (() -> Void)?
     @State private var isHovering = false
 
     var body: some View {
@@ -112,10 +117,11 @@ private struct TabChip: View {
         .simultaneousGesture(TapGesture(count: 2).onEnded { rename() })
         .contextMenu {
             if !item.notices.isEmpty {
-                Button("알림 지우기") { item.notices.forEach(FineNotch.dismiss) }
+                Button("알림 지우기") { MainActor.assumeIsolated { item.notices.forEach(NotchOwner.shared.dismiss) } }
                 Divider()
             }
             if onRename != nil { Button("이름 바꾸기…", action: rename) }
+            if let onMoveToFine { Button("Fine으로 옮기기", action: onMoveToFine) }
             if let onClose {
                 Divider()
                 Button("탭 닫기", action: onClose)

@@ -37,8 +37,14 @@ sm — SpaceManager를 터미널에서 조작한다
   sm spawn|attach|resume|ls|tail|stop|restore …
                                       에이전트 세션 — ~/.smux/bin/sm-session에 그대로 넘긴다
 
-  sm reveal NAME[@HOST]               그 에이전트가 보이는 패널을 앞으로(워크스페이스·탭·패널, 키 입력까지).
-                                      어느 패널에도 없으면 새 탭에 붙인다. Fine 노치 알림을 누르면 Fine이 부른다
+  sm reveal NAME[@HOST]               그 에이전트가 보이는 곳을 앞으로(sm 패널, 키 입력까지 — 또는 그 세션을
+                                      보는 Fine 탭). 어디에도 없으면 새 탭에 붙인다. 노치 알림을 누르면 이 길로 간다
+  sm notify <message> [--title T] [--state waiting|blocked|error|working|done|unknown] [--id KEY]
+            [--source sm:NAME|%PANE|fine:TAB] [--host H] [--workspace W]
+                                      화면 노치에 알림을 올린다(같은 --id면 그 항목을 바꾼다). 제어 소켓의
+                                      attention.post와 같다 — 노치가 아직 Fine에 있으면 Fine으로 넘어간다
+  sm notch [list] | dismiss <id> | open <id> | show | hide | status
+                                      노치의 알림 목록, 지우기(×와 같다), 보낸 곳 열기, 펼치기·접기
   sm capture [-w win] <file.png> [--rect x,y,w,h]   창을 찍는다(앱이 자기 창을 찍어 화면 기록 권한이 필요 없다)
   sm capture [-w win] --rect x,y,w,h --burst N [--every MS] [dir]
                                       같은 자리를 N번 연달아 찍어 시각(ms)과 평균 색을 낸다(페이드 확인용)
@@ -90,7 +96,11 @@ var argv = Array(CommandLine.arguments.dropFirst())
 
 // 세션 층 명령은 기기마다 도는 sm-session이 맡는다(10/31 cld-claude-7과 정한 두 층). 맥에서도
 // `sm spawn …`이 아치·누크와 같은 명령이 되도록 인자를 그대로 넘기고 이 프로세스를 바꿔 끼운다.
-let sessionCommands: Set<String> = ["spawn", "attach", "resume", "ls", "tail", "stop", "restore"]
+// ws·tab은 이 앱의 명령과 이름이 겹쳐서 넘기지 않는다(세션 층의 것은 `sm-session ws|tab …`). 11/01: 여기 없던
+// where가 "unknown command"로 막혀, 죽은 세션을 원래 칸에 살리려던 에이전트가 sm-session을 직접 찾아야 했다.
+let sessionCommands: Set<String> = ["spawn", "attach", "resume", "ls", "tail", "stop", "restore", "where", "layout",
+                                    "watch", "split", "resize", "focus", "zoom", "swap", "close", "move", "bind",
+                                    "sleep", "wake", "adopt", "migrate"]
 if let first = argv.first, sessionCommands.contains(first) {
     let sessionCLI = (NSHomeDirectory() as NSString).appendingPathComponent(".smux/bin/sm-session")
     guard FileManager.default.isExecutableFile(atPath: sessionCLI) else {
@@ -115,7 +125,8 @@ while i < argv.count {
     case "--no-focus": noFocus = true
     case "-w", "--window": i += 1; windowArg = i < argv.count ? argv[i] : nil
     case "--quick", "--proxy": flags[String(a.dropFirst(2))] = "true"
-    case "--name", "--host", "--model", "--effort", "-n", "--limit", "--rect", "--burst", "--every", "--do":
+    case "--name", "--host", "--model", "--effort", "-n", "--limit", "--rect", "--burst", "--every", "--do",
+         "--title", "--state", "--id", "--source", "--workspace":
         i += 1; flags[a.hasPrefix("--") ? String(a.dropFirst(2)) : "limit"] = i < argv.count ? argv[i] : ""
     case "-h", "--help", "help": print(usage); exit(0)
     default: positional.append(a)
@@ -188,6 +199,18 @@ do {
         if let rect = flags["rect"] { args["rect"] = rect }
     case ("activity", _): command = "activity.list"
     case ("state", _): command = "state.dump"
+    case ("notify", _):
+        command = "attention.post"
+        let message = ([sub].compactMap { $0 } + rest).joined(separator: " ")
+        guard !message.isEmpty else { throw CLIError(message: "usage: sm notify <message> [--title T] [--state S] [--id KEY]") }
+        args = ["message": message, "key": flags["id"] ?? UUID().uuidString.lowercased(), "host": flags["host"] ?? "local"]
+        for field in ["title", "state", "source", "workspace"] { if let value = flags[field] { args[field] = value } }
+    case ("notch", nil), ("notch", "list"): command = "attention.list"
+    case ("notch", "dismiss"): command = "attention.dismiss"; args["id"] = try need(1, "sm notch dismiss <id>")[0]
+    case ("notch", "open"): command = "attention.open"; args["id"] = try need(1, "sm notch open <id>")[0]
+    case ("notch", "show"): command = "attention.show"
+    case ("notch", "hide"): command = "attention.hide"
+    case ("notch", "status"): command = "attention.status"
     default: throw CLIError(message: "unknown command: \(positional.joined(separator: " "))\n\n\(usage)")
     }
     let response = try send(command, args)
@@ -232,6 +255,13 @@ func render(command: String, result: Any) -> String {
             [String(i), short(w["id"]), str(w["kind"]), str(w["isKey"]) == "yes" ? "*" : "", str(w["selectedWorkspace"]), "\(str(w["workspaceCount"])) ws", "\(str(w["tabCount"])) tabs", str(w["appearance"])]
         }
         return table([["#", "id", "kind", "key", "selected", "", "", "look"]] + rows)
+    case "attention.list":
+        let rows = (result as? [[String: Any]] ?? []).map { n in
+            [str(n["state"]), str(n["host"]), str(n["title"]), String(str(n["message"]).prefix(50)), str(n["id"])]
+        }
+        return table([["state", "host", "title", "message", "id"]] + rows)
+    case "attention.post":
+        return str((result as? [String: Any])?["id"])
     case "ws.list", "ws.move":
         let rows = (result as? [[String: Any]] ?? []).map { w in
             [str(w["selected"]) == "yes" ? "*" : "", str(w["name"]), str(w["tmuxSession"]), str(w["remoteHost"]).isEmpty ? "local" : "@" + str(w["remoteHost"]), home(str(w["rootPath"])), short(w["window"])]

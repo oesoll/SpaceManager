@@ -380,7 +380,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
             fields["host"] = host
         }
         noticeFields = fields
-        FineNotch.post(fields)
+        MainActor.assumeIsolated { NotchOwner.shared.post(fields) }
         watchInputForNotice()
     }
 
@@ -407,7 +407,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         guard PeerDirectory.shared.notices.contains(where: { $0.key == terminalNoticeKey }) else { return }
         fields["state"] = "done"
         fields["message"] = "이어서 진행하고 있어요."
-        FineNotch.post(fields)
+        MainActor.assumeIsolated { NotchOwner.shared.post(fields) }
     }
     static let afterWake: TimeInterval = 3
 

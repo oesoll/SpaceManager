@@ -195,13 +195,13 @@ extension AppState {
         paneSessions(of: tab)
             .compactMap { pane in
                 directory.agent(for: pane, includeStale: true).map(directory.attention(of:))
-                    ?? directory.terminalNotice(for: pane).map { $0.state == "error" ? .error : .blocked }
+                    ?? directory.terminalNotice(for: pane).map { $0.state == .error ? .error : .blocked }
             }
             .max()
     }
 
     /// 탭 하나의 노치 알림들.
-    func notices(forTab tab: TerminalSession, directory: PeerDirectory) -> [NotchNotice] {
+    func notices(forTab tab: TerminalSession, directory: PeerDirectory) -> [AttentionItem] {
         paneSessions(of: tab).compactMap { pane in
             directory.agent(for: pane, includeStale: true).flatMap(directory.notice(for:)) ?? directory.terminalNotice(for: pane)
         }

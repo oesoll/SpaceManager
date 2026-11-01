@@ -44,7 +44,7 @@ final class PeerDirectoryTests: XCTestCase {
     /// SEOL 차례인지는 노치가 정한다. 턴이 끝났다고 sm이 따로 "끝남"을 올리지 않는다 — 노치에 없는 표시는
     /// 두 앱을 어긋나게 했다(11/01). 에이전트가 seol-notch로 부르면 노치와 sm에 같이 뜬다.
     func testNotchDecidesWhoNeedsSEOL() {
-        let directory = PeerDirectory(command: [], localHost: "mac", notchFile: nil)
+        let directory = PeerDirectory(command: [], localHost: "mac")
         let finished = agent(id: "claude:s1", name: "sm-front", state: .idle, since: Date())
         directory.apply(PeerListing(peers: [finished]))
         XCTAssertEqual(directory.attention(of: finished), .idle, "a turn that ended is not SEOL's turn by itself")
@@ -87,7 +87,7 @@ final class PeerDirectoryTests: XCTestCase {
     /// 권한·질문으로 막힌 에이전트: 노치에서 지우면 에이전트가 아직 막혀 있어도 sm에서 내린다(두 앱이 같은 것을
     /// 보인다). 노치에 아예 오지 않은 막힘(맥이 잠든 사이 배달이 빠짐)은 peer 상태대로 sm에 남는다.
     func testDismissingInTheNotchClearsTheBlockedPane() {
-        let directory = PeerDirectory(command: [], localHost: "mac", notchFile: nil)
+        let directory = PeerDirectory(command: [], localHost: "mac")
         let start = Date(timeIntervalSince1970: 2000)
         let blocked = agent(id: "claude:s5", name: "qa", state: .blocked, since: start, reason: "permission")
         directory.apply(PeerListing(peers: [blocked]))
@@ -105,32 +105,8 @@ final class PeerDirectoryTests: XCTestCase {
         XCTAssertEqual(directory.attention(of: again), .blocked)
     }
 
-    /// Fine이 실제로 쓰는 파일 모양을 읽고, 파일이 바뀌면 곧 따라온다.
-    func testFollowsTheNotchFile() throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("notch-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let file = folder.appendingPathComponent("attention.json")
-        func write(_ state: String) throws {
-            // Fine의 AttentionItem을 JSONEncoder 기본값으로 쓴 모양(날짜는 2001년 기준 초).
-            let json = """
-            [{"id":"WyJsb2NhbCJd","key":"seol-notch:peer:qa","host":"local","source":"sm:qa","fingerprint":"",
-              "title":"답 · qa","message":"골라 줘","state":"\(state)","updatedAt":815187022.2,"workspace":""}]
-            """
-            try Data(json.utf8).write(to: file, options: .atomic)
-        }
-        try write("waiting")
-        let directory = PeerDirectory(command: [], localHost: "mac", notchFile: file)
-        XCTAssertEqual(directory.notices.map(\.key), ["seol-notch:peer:qa"])
-        XCTAssertEqual(directory.notices.first?.updatedAt, Date(timeIntervalSinceReferenceDate: 815187022.2))
-        try write("done")
-        let deadline = Date().addingTimeInterval(5)
-        while !directory.notices.isEmpty && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
-        XCTAssertTrue(directory.notices.isEmpty, "the notch file changed but sm did not follow")
-    }
-
     func testUnreachableHostKeepsItsLastRowsAsStale() {
-        let directory = PeerDirectory(command: [], localHost: "mac", notchFile: nil)
+        let directory = PeerDirectory(command: [], localHost: "mac")
         let remote = agent(id: "r", host: "arch", state: .working, since: Date())
         let local = agent(id: "l", host: "mac", state: .idle, since: Date())
         directory.apply(PeerListing(peers: [remote, local]))
@@ -144,7 +120,7 @@ final class PeerDirectoryTests: XCTestCase {
     }
 
     func testPaneMatchingUsesTheSmTarget() throws {
-        let directory = PeerDirectory(command: [], localHost: "mac", notchFile: nil)
+        let directory = PeerDirectory(command: [], localHost: "mac")
         let listing = try PeerListing.decode(Data(sample.utf8))
         directory.apply(listing)
         let pane = try XCTUnwrap(UUID(uuidString: "3f2504e0-4f89-11d3-9a0c-0305e82c3301"))
@@ -170,8 +146,8 @@ final class PeerDirectoryTests: XCTestCase {
     }
 
     private func notice(key: String, host: String, source: String = "", title: String = "에이전트",
-                        message: String = "", state: String = "waiting") -> NotchNotice {
-        NotchNotice(id: key + host, key: key, host: host, source: source, title: title, message: message,
-                    state: state, updatedAt: Date(timeIntervalSinceReferenceDate: 815_000_000))
+                        message: String = "", state: AttentionState = .waiting) -> AttentionItem {
+        AttentionItem(id: key + host, key: key, host: host, source: source, fingerprint: "", title: title,
+                      message: message, state: state, updatedAt: Date(timeIntervalSinceReferenceDate: 815_000_000))
     }
 }

@@ -193,11 +193,54 @@ enum ControlCommands {
         }
     }
 
+    /// sm 패널에서 세션을 연다. 어디 있는지는 세션 층이 안다(원격도, 이름의 대소문자도 맞춰 준다).
+    private static func revealInSM(_ target: String, completion: @escaping (ControlResponse) -> Void) {
+        SessionLayer.run(["where", target, "--json"]) { result in
+            switch result {
+            case .failure(let failure):
+                completion(.error(failure.message))
+            case .success(let data):
+                guard let found = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let name = found["name"] as? String, let host = found["host"] as? String else {
+                    completion(.error("sm-session where: unexpected answer")); return
+                }
+                guard let layoutWorkspace = found["workspace"] as? String else {
+                    completion(.error("\(name)@\(host) is not in any workspace")); return
+                }
+                let key = LayoutDirectory.key(workspace: layoutWorkspace, host: host)
+                // 그 워크스페이스를 이미 보여 주는 창 → 앞에 있는 창 → 그 워크스페이스를 가진 아무 창.
+                let windows = liveWindows().filter { $0.state.windowKind == .workspace }
+                let holding = windows.compactMap { entry in
+                    entry.state.workspaces.first { entry.state.layoutKey(for: $0) == key }.map { (entry, $0) }
+                }
+                let chosen = holding.first { $0.0.state.selectedWorkspace?.id == $0.1.id }
+                    ?? holding.first { $0.0.window?.isKeyWindow == true } ?? holding.first
+                guard let (entry, workspace) = chosen else {
+                    completion(.error("no sm window has workspace \(key) — add it with sm ws add")); return
+                }
+                focus(entry)
+                entry.state.reveal(session: name, in: workspace, layoutKey: key, pane: found["pane"] as? String) { outcome in
+                    switch outcome {
+                    case .failure(let failure): completion(.error(failure.message))
+                    case .success(let place):
+                        completion(.ok(["name": name, "host": host, "workspace": layoutWorkspace, "tab": place.tab,
+                                        "pane": place.pane, "window": entry.state.windowStateId.uuidString]))
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - 비동기 명령 (창을 열고 기다려야 하는 것들)
 
     /// 처리했으면 non-nil. 창 생성은 SwiftUI가 다음 run loop에서 AppState를 만들기 때문에
     /// 레지스트리에 새 창이 등록될 때까지 폴링한 뒤 응답한다.
     private static func dispatchAsync(_ r: ControlRequest, completion: @escaping (ControlResponse) -> Void) throws -> Bool? {
+        // 노치 명령(Fine과 같은 이름·같은 모양). 노치를 누가 그리든 입구는 여기다.
+        if r.command.hasPrefix("attention.") {
+            NotchOwner.shared.handle(r, completion: completion)
+            return true
+        }
         switch r.command {
         case "window.new":
             let kind: WindowKind = (r.string("kind") ?? "workspace") == "quick" ? .quick : .workspace
@@ -236,39 +279,19 @@ enum ControlCommands {
 
         case "session.reveal":
             guard let target = r.string("target"), !target.isEmpty else { throw fail("usage: sm reveal NAME[@HOST]") }
-            // 어디 있는지는 세션 층이 안다(원격도, 이름의 대소문자도 맞춰 준다).
-            SessionLayer.run(["where", target, "--json"]) { result in
-                switch result {
-                case .failure(let failure):
-                    completion(.error(failure.message))
-                case .success(let data):
-                    guard let found = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          let name = found["name"] as? String, let host = found["host"] as? String else {
-                        completion(.error("sm-session where: unexpected answer")); return
-                    }
-                    guard let layoutWorkspace = found["workspace"] as? String else {
-                        completion(.error("\(name)@\(host) is not in any workspace")); return
-                    }
-                    let key = LayoutDirectory.key(workspace: layoutWorkspace, host: host)
-                    // 그 워크스페이스를 이미 보여 주는 창 → 앞에 있는 창 → 그 워크스페이스를 가진 아무 창.
-                    let windows = liveWindows().filter { $0.state.windowKind == .workspace }
-                    let holding = windows.compactMap { entry in
-                        entry.state.workspaces.first { entry.state.layoutKey(for: $0) == key }.map { (entry, $0) }
-                    }
-                    let chosen = holding.first { $0.0.state.selectedWorkspace?.id == $0.1.id }
-                        ?? holding.first { $0.0.window?.isKeyWindow == true } ?? holding.first
-                    guard let (entry, workspace) = chosen else {
-                        completion(.error("no sm window has workspace \(key) — add it with sm ws add")); return
-                    }
-                    focus(entry)
-                    entry.state.reveal(session: name, in: workspace, layoutKey: key, pane: found["pane"] as? String) { outcome in
-                        switch outcome {
-                        case .failure(let failure): completion(.error(failure.message))
-                        case .success(let place):
-                            completion(.ok(["name": name, "host": host, "workspace": layoutWorkspace, "tab": place.tab,
-                                            "pane": place.pane, "window": entry.state.windowStateId.uuidString]))
+            // 그 세션을 Fine 탭이 보고 있으면(Fine으로 옮긴 세션, Fine이 띄운 세션) 그 탭을 앞으로 — 세션은 하나라도
+            // 보는 앱은 그때그때 하나다. 아니면 sm 패널.
+            FineControl.tab(showing: target, localHost: PeerDirectory.shared.localHostName) { tab in
+                if let tab {
+                    FineControl.request("tab.select", ["tab": tab]) { reply in
+                        switch reply {
+                        case .ok: completion(.ok(["name": target, "fineTab": tab]))
+                        case .failed(let message): completion(.error(message))
+                        case .unreachable: completion(.error("Fine did not answer"))
                         }
                     }
+                } else {
+                    revealInSM(target, completion: completion)
                 }
             }
             return true

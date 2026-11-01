@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do { try server.start(); controlServer = server } catch {
             NSLog("control server unavailable: \(error)")
         }
+        // 화면 노치. Fine이 아직 노치를 가졌으면 넘겨 주기만 하고, 걷어 냈으면 이어받는다(NotchOwner).
+        MainActor.assumeIsolated { NotchOwner.shared.start() }
         // 라이트/다크는 창별(AppState.preferredAppearance → NSWindow.appearance) —
         // 전역 NSApp.appearance는 건드리지 않는다
     }

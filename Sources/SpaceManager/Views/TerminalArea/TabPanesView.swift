@@ -73,6 +73,8 @@ private struct PaneCard: View {
     var showsLegend = true
     /// 이름표 오른쪽 끝의 글자 버튼 하나(예: tmux에 남은 에이전트 옮기기).
     var legendAction: LegendAction?
+    /// 이름표 메뉴의 "Fine으로 옮기기". 세션을 보이는 패널에만.
+    var onMoveToFine: (() -> Void)?
     /// 포인터가 머물렀을 때 부른다. nil이면 호버로 포커스를 옮기지 않는다(고르는 상자가 떠 있을 때 등).
     var onHoverFocus: (() -> Void)?
     @State private var hoverWork: DispatchWorkItem?
@@ -88,6 +90,9 @@ private struct PaneCard: View {
                     .contentShape(Rectangle())
                     .contextMenu {
                         Button(isZoomed ? "확대 끝내기" : "이 패널 확대", action: onZoom)
+                        if let onMoveToFine {
+                            Button("Fine으로 옮기기", action: onMoveToFine)
+                        }
                         if let onClose {
                             Divider()
                             Button("패널 닫기", action: onClose)
@@ -170,7 +175,7 @@ private struct PaneLegend: View {
             }
             if let notice = badge.notice {
                 // 노치의 ×와 같다: 노치에서 지우면 sm에서도, 여기서 지우면 노치에서도 사라진다.
-                Button { FineNotch.dismiss(notice.id) } label: {
+                Button { MainActor.assumeIsolated { NotchOwner.shared.dismiss(notice.id) } } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(Color(Chrome.textTertiary))
@@ -411,6 +416,8 @@ struct LayoutTabView: View {
                      onZoom: { appState.zoomLayoutPane(id, in: layout) },
                      showsLegend: multiple,
                      legendAction: migrateAction(for: id, session: session),
+                     onMoveToFine: layout.panes[id]?.session != nil && !isInTmux(id)
+                        ? { appState.moveLayoutPaneToFine(id, in: layout) } : nil,
                      onHoverFocus: isShown && multiple && pending == nil && drag == nil ? {
                          guard focused != id else { return }
                          appState.focusLayoutPane(id, in: layout)
