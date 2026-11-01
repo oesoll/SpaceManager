@@ -17,16 +17,27 @@ enum TerminalAttachment: Equatable {
     case agent(name: String, host: String, agent: String?)
 
     /// 로그인 셸이 실행할 명령. nil이면 셸 그대로.
-    func command() -> String? {
+    /// `recordingExitTo`: 명령이 끝날 때 셸이 종료 코드를 적을 파일(TerminalSession.exitStatusPath).
+    func command(recordingExitTo path: String? = nil) -> String? {
         switch self {
         case .shell:
             return nil
+        case .agent(let name, let host, _) where path != nil:
+            return Self.recordingExit("exec " + Self.quote(SessionLayer.executable) + " attach " + Self.quote(name + "@" + host),
+                                      to: path!)
         case .agent(let name, let host, _):
             // 이름이 아니라 경로로 부른다. 앱이 Finder·로그인 항목으로 뜨면(또는 깨끗한 환경으로 띄우면) PATH에
             // ~/.smux/bin이 없고, 패널의 로그인 셸(-lc)은 그 경로를 넣는 대화형 설정을 읽지 않는다 — 10/31 모든
             // 패널이 "command not found: sm-session"으로 끊겼다.
             return "exec " + Self.quote(SessionLayer.executable) + " attach " + Self.quote(name + "@" + host)
         }
+    }
+
+    /// 명령이 끝나면 셸이 종료 코드를 `path`에 적고 그 코드로 나가게 감싼다. 터미널은 명령을 login으로 감싸
+    /// 띄우고 login은 안쪽 종료 코드를 삼키므로(TerminalSession.exitStatusPath), 셸이 `exec`로 사라지지 않고 남는다.
+    static func recordingExit(_ command: String, to path: String) -> String {
+        let body = command.hasPrefix("exec ") ? String(command.dropFirst(5)) : command
+        return body + "; code=$?; printf '%s' \"$code\" > " + quote(path) + "; exit \"$code\""
     }
 
     /// POSIX 셸 작은따옴표 인용.

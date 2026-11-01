@@ -77,6 +77,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         self.quickLaunch = quickLaunch
         self.quickConfiguration = quickConfiguration
         self.quickSessionId = quickLaunch?.resumeSessionId
+        observeWake()
     }
 
     /// 화면에 붙일 터미널. 처음 부르는 순간 프로세스가 뜬다.
@@ -128,10 +129,10 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     }
 
     private func launchArguments(startDirectory: String) -> [String] {
-        if kind == .shell, let command = attachment.command() {
+        if kind == .shell, let command = attachment.command(recordingExitTo: exitStatusPath) {
             return ["-lc", command]
         }
-        return Self.launchArguments(
+        let arguments = Self.launchArguments(
             kind: kind,
             tmuxSessionName: tmuxSessionName,
             workingDirectory: startDirectory,
@@ -142,6 +143,11 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
             quickConfiguration: quickConfiguration,
             sshErrorLog: sshErrorLogPath
         )
+        // 원격 tmux 탭도 끊긴 ssh(255)일 때 다시 붙는다 — 그 코드를 login이 삼키지 않게 적어 둔다.
+        if kind == .tmuxMain || kind == .tmuxExtra, remoteHost?.isEmpty == false, arguments.count == 2, arguments[0] == "-lc" {
+            return ["-lc", TerminalAttachment.recordingExit(arguments[1], to: exitStatusPath)]
+        }
+        return arguments
     }
 
     /// 앱 환경에서 바꿀 것만(더할 값, 지울 이름). TERM·COLORTERM은 Ghostty 설정이 준다.
@@ -284,7 +290,21 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         DispatchQueue.main.async { old?.terminate() }
     }
 
-    private func surfaceExited(_ view: GhosttyTerminalView, code: Int32, connectedFor: TimeInterval) {
+    /// 패널 명령의 진짜 종료 코드를 셸이 적는 파일. 터미널은 명령을 login으로 감싸 띄우는데, login은 안쪽이
+    /// 어떻게 끝나든 0을 돌려준다(10/31 실측: zsh 255 → login 0). 그래서 끊긴 ssh(255)와 정상 종료를 가르지
+    /// 못해, 맥이 잠든 사이 끊긴 아치 패널이 다시 붙지 않았다.
+    let exitStatusPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("sm-exit-\(UUID().uuidString)")
+
+    /// 적힌 코드가 있으면 그것(읽고 지운다), 없으면 터미널이 알려 준 코드.
+    private func recordedExit(or fallback: Int32) -> Int32 {
+        defer { try? FileManager.default.removeItem(atPath: exitStatusPath) }
+        guard let text = try? String(contentsOfFile: exitStatusPath, encoding: .utf8),
+              let code = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return fallback }
+        return code
+    }
+
+    private func surfaceExited(_ view: GhosttyTerminalView, code reported: Int32, connectedFor: TimeInterval) {
+        let code = recordedExit(or: reported)
         if view === pendingView {
             pendingTimer?.invalidate()
             pendingView = nil
@@ -301,7 +321,8 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     /// 끊기기 전 마지막 프레임을 유지한다 (오류 화면으로 바꾸지 않는다).
     func handleExit(exitCode: Int32, connectedFor: TimeInterval) {
         guard let delay = RemoteReconnectPolicy.delay(kind: kind, remoteHost: remoteHost,
-            exitCode: exitCode, attempt: reconnectAttempt, connectedFor: connectedFor) else {
+            exitCode: exitCode, attempt: reconnectAttempt, connectedFor: connectedFor,
+            remoteAgent: attachesRemoteAgent) else {
             // detach(0)처럼 의도된 종료는 재시도 배지를 남기지 않는다.
             isReconnecting = false
             return
@@ -315,6 +336,29 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
             self?.restartIfDead()
         }
     }
+
+    /// 다른 기기의 에이전트에 ssh로 붙은 패널인가(`sm-session attach NAME@arch`).
+    private var attachesRemoteAgent: Bool {
+        guard case .agent(_, let host, _) = attachment else { return false }
+        return host != PeerDirectory.shared.localHostName
+    }
+
+    /// 맥이 깨어나면 다시 붙기를 기다리던 패널은 대기를 버리고 곧 다시 시도한다 — 잠든 사이 쌓인 대기
+    /// (최대 30초)를 깨자마자 기다리게 하지 않는다. 네트워크가 돌아올 몇 초는 준다.
+    private func observeWake() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.isReconnecting, self.pendingView == nil else { return }
+            self.reconnectAttempt = 0
+            self.cancelReconnectTimer()
+            self.reconnectTimer = Timer.scheduledTimer(withTimeInterval: Self.afterWake, repeats: false) { [weak self] _ in
+                self?.restartIfDead()
+            }
+        }
+    }
+
+    private var wakeObserver: NSObjectProtocol?
+    static let afterWake: TimeInterval = 3
 
     /// 새 연결이 원격 화면을 보내기 시작했다 — 배지를 내리고 입력을 다시 받는다.
     func connectionResumed() {
@@ -371,6 +415,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         cancelReconnectTimer()
         isReconnecting = false
         try? FileManager.default.removeItem(atPath: sshErrorLogPath)
+        try? FileManager.default.removeItem(atPath: exitStatusPath)
         if isTrackingQuickTitle { QuickConversationScanner.shared.untrack(owner: id) }
         isTrackingQuickTitle = false
         quickIdentityTimer?.invalidate()
@@ -391,9 +436,11 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     }
 
     deinit {
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
         reconnectTimer?.invalidate()
         pendingTimer?.invalidate()
         try? FileManager.default.removeItem(atPath: sshErrorLogPath)
+        try? FileManager.default.removeItem(atPath: exitStatusPath)
         quickIdentityTimer?.invalidate()
         if isTrackingQuickTitle { QuickConversationScanner.shared.untrack(owner: id) }
     }
@@ -439,11 +486,20 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     }
 }
 
-/// Only a persistent remote tmux attachment is retried. A deliberate detach (0),
+/// Only a persistent remote attachment is retried. A deliberate detach (0),
 /// a shell exit or a Quick conversation must stay closed. Cap retries while a host sleeps.
+///
+/// A pane attached to an agent on another machine (`sm-session attach NAME@arch`) is retried only when
+/// ssh itself failed (255) — after the Mac slept, the connection was gone and the pane stayed dead
+/// (10/31). Other exits mean the session ended: `sm stop` ends the attach with 143, the agent quitting
+/// with its own code, and reattaching would resume what was stopped on purpose.
 enum RemoteReconnectPolicy {
     static func delay(kind: TabKind, remoteHost: String?, exitCode: Int32,
-                      attempt: Int, connectedFor: TimeInterval) -> TimeInterval? {
+                      attempt: Int, connectedFor: TimeInterval, remoteAgent: Bool = false) -> TimeInterval? {
+        if remoteAgent {
+            guard exitCode == 255 else { return nil }
+            return min(30, 3 * pow(2, Double(connectedFor >= 30 ? 0 : min(4, max(0, attempt)))))
+        }
         guard kind == .tmuxMain || kind == .tmuxExtra,
               let remoteHost, !remoteHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               exitCode != 0 else { return nil }

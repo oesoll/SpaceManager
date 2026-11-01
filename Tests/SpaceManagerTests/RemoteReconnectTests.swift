@@ -61,6 +61,22 @@ final class RemoteReconnectTests: XCTestCase {
         XCTAssertNil(RemoteReconnectPolicy.delay(kind: .tmuxMain, remoteHost: nil, exitCode: 1, attempt: 0, connectedFor: 1))
     }
 
+    /// 다른 기기의 에이전트에 붙은 패널: ssh가 끊겼을 때(255)만 다시 붙는다. 맥이 잠든 사이 연결이 사라지고
+    /// 패널이 끊긴 채로 남았다(10/31). 그 밖의 종료는 세션이 끝난 것이다 — 실측: `sm stop` 143, 에이전트
+    /// 정상 종료 0, 붙들기가 죽음 1. 다시 붙으면 일부러 멈춘 세션을 되살린다.
+    func testRemoteAgentPaneRetriesOnlyWhenSshDropped() {
+        XCTAssertEqual(RemoteReconnectPolicy.delay(kind: .shell, remoteHost: nil, exitCode: 255, attempt: 0,
+                                                   connectedFor: 3600, remoteAgent: true), 3)
+        XCTAssertEqual(RemoteReconnectPolicy.delay(kind: .shell, remoteHost: nil, exitCode: 255, attempt: 9,
+                                                   connectedFor: 1, remoteAgent: true), 30)
+        for code: Int32 in [0, 1, 143] {
+            XCTAssertNil(RemoteReconnectPolicy.delay(kind: .shell, remoteHost: nil, exitCode: code, attempt: 0,
+                                                     connectedFor: 1, remoteAgent: true), "exit \(code) must stay closed")
+        }
+        // 이 기기의 에이전트 패널은 ssh를 거치지 않으니 그대로 둔다.
+        XCTAssertNil(RemoteReconnectPolicy.delay(kind: .shell, remoteHost: nil, exitCode: 255, attempt: 0, connectedFor: 1))
+    }
+
     func testFailedManagedRestoreDoesNotCreateAnEmptyReplacement() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -104,5 +120,21 @@ final class RemoteReconnectTests: XCTestCase {
         let tmux = TerminalSession(kind: .tmuxExtra, name: "flat-2", workingDirectory: "/tmp", tmuxSessionName: "flat-2")
         XCTAssertEqual(tmux.retargeted(to: "arch").name, "flat-2")
         [shell, remote, tmux].forEach { $0.cleanup() }
+    }
+
+    /// 터미널은 패널 명령을 login으로 감싸고 login은 종료 코드를 삼킨다. 감싼 명령은 ssh 자리의 진짜 코드를
+    /// 파일에 남기고 그 코드로 끝나야 한다 — 원격 tmux 탭의 `exec ssh … 2>log` 꼴도 그대로.
+    func testWrappedCommandRecordsTheRealExitCode() throws {
+        let path = NSTemporaryDirectory() + "sm-exit-test-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let wrapped = TerminalAttachment.recordingExit("exec sh -c 'exit 255' 2>" + TerminalAttachment.quote(path + ".err"), to: path)
+        let shell = Process()
+        shell.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        shell.arguments = ["-lc", wrapped]
+        try shell.run()
+        shell.waitUntilExit()
+        try? FileManager.default.removeItem(atPath: path + ".err")
+        XCTAssertEqual(shell.terminationStatus, 255)
+        XCTAssertEqual(try String(contentsOfFile: path, encoding: .utf8), "255")
     }
 }
