@@ -100,6 +100,9 @@ struct PaneBadge: Equatable {
             }
         case .error: detail = "실패"
         case .waiting: detail = agent.waitingOn.map { "\($0) 대기" }
+        // 멈춘(또는 잠든) 세션: 패널은 붙어 있지만 키를 누르기 전엔 다시 시작하지 않는다(쿼타). 마지막 화면이
+        // 없으면 패널이 비어 보여서, 에이전트가 사라진 줄 알았다(11/01).
+        case .gone: detail = "멈춤 · 키를 누르면 이어서"
         default: detail = nil
         }
     }
