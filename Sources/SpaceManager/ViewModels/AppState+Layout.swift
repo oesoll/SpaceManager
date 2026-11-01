@@ -373,6 +373,14 @@ extension AppState {
             .max()
     }
 
+    /// 배치 탭 하나의 노치 알림들.
+    func layoutNotices(tab: WorkspaceLayout.Tab, in layout: WorkspaceLayout, directory: PeerDirectory) -> [NotchNotice] {
+        tab.root.paneIDs
+            .compactMap { layout.panes[$0]?.session }
+            .compactMap { name in directory.agents.first { $0.name == name && $0.host == layout.host } }
+            .compactMap(directory.notice(for:))
+    }
+
     /// ⌘J: 이 워크스페이스의 모든 탭에서 SEOL을 기다리는 패널로(막힘 > 오류 > 안 본 끝남, 오래 기다린 순).
     func focusNextWaitingLayoutPane(_ layout: WorkspaceLayout, workspace: Workspace, directory: PeerDirectory) {
         var candidates: [(tab: String, pane: String, attention: AgentAttention, since: Date)] = []

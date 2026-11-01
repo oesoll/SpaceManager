@@ -17,6 +17,8 @@ struct WorkspaceTabStrip: View {
         var isZoomed = false
         var isPending = false
         var canClose = true
+        /// 이 탭 패널들의 노치 알림 id. 패널이 하나뿐인 탭은 이름표(와 그 ×)가 없어서 칩 메뉴로 지운다.
+        var notices: [String] = []
     }
 
     let items: [Item]
@@ -109,6 +111,10 @@ private struct TabChip: View {
         .onTapGesture(perform: onSelect)
         .simultaneousGesture(TapGesture(count: 2).onEnded { rename() })
         .contextMenu {
+            if !item.notices.isEmpty {
+                Button("알림 지우기") { item.notices.forEach(FineNotch.dismiss) }
+                Divider()
+            }
             if onRename != nil { Button("이름 바꾸기…", action: rename) }
             if let onClose {
                 Divider()

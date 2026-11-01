@@ -168,6 +168,18 @@ private struct PaneLegend: View {
                         .foregroundStyle(Color(Chrome.textTertiary))
                 }
             }
+            if let notice = badge.notice {
+                // 노치의 ×와 같다: 노치에서 지우면 sm에서도, 여기서 지우면 노치에서도 사라진다.
+                Button { FineNotch.dismiss(notice.id) } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(Color(Chrome.textTertiary))
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("알림 지우기 (노치에서도 지워짐)")
+            }
             if isZoomed {
                 Text("확대")
                     .font(.system(size: 11))
@@ -430,7 +442,8 @@ struct LayoutTabView: View {
     private func badge(for id: String, session: TerminalSession) -> PaneBadge {
         let title = layout.panes[id]?.session ?? session.name
         var badge = agent(for: id)
-            .map { PaneBadge(agent: $0, attention: directory.attention(of: $0), title: title) }
+            .map { PaneBadge(agent: $0, attention: directory.attention(of: $0), notice: directory.notice(for: $0), title: title) }
+            ?? directory.terminalNotice(for: session).map { PaneBadge(title: title, notice: $0) }
             ?? PaneBadge(title: title)
         // 아직 tmux에 남은 에이전트. 쉬는 상태가 되면 sm으로 옮길 수 있다.
         if isInTmux(id), badge.detail == nil { badge.detail = "tmux" }

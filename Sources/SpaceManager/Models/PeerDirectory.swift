@@ -71,18 +71,22 @@ struct PeerAgent: Decodable, Identifiable, Equatable {
     }
 }
 
-/// 사이드바에 그리는 상태. peer의 상태에 "SEOL이 봤는가"를 더한 것이다 —
-/// 끝났는데 아직 안 본 에이전트(done)는 peer가 모르고 sm만 안다.
+/// 사이드바에 그리는 상태. SEOL이 손대야 하는 것(막힘·오류)은 Fine 노치와 같은 것이고, 나머지는 peer 상태다.
+///
+/// 예전에는 "턴이 끝났는데 SEOL이 아직 안 본" 에이전트를 sm이 따로 done으로 올렸다. 노치에는 없는 추측이라
+/// 두 앱이 어긋났고, 턴이 끝난 것이 다른 에이전트의 답을 기다리는 것일 수도 있다(SEOL 10/30). 정말 SEOL이
+/// 필요한지는 에이전트가 `seol-notch`로 말하고, 그것이 노치와 sm에 같이 뜬다(11/01 SEOL: "완벽 동기화").
 enum AgentAttention: Int, Comparable {
-    case gone, unknown, idle, waiting, working, done, error, blocked
+    case gone, unknown, idle, waiting, working, error, blocked
 
     /// 클수록 급하다. 워크스페이스 줄에는 안의 패널 중 가장 급한 것 하나가 올라간다.
     static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 
     /// SEOL이 손대야 하는 상태. 다음 패널로 건너뛰기(⌘J)가 도는 대상이다.
-    var needsSEOL: Bool { self == .blocked || self == .error || self == .done }
+    var needsSEOL: Bool { self == .blocked || self == .error }
 
-    static func of(_ agent: PeerAgent, seenAt: Date?) -> AgentAttention {
+    /// peer 상태만으로. 노치가 있으면 PeerDirectory.attention(of:)이 그것을 먼저 본다.
+    static func of(_ agent: PeerAgent) -> AgentAttention {
         switch agent.state {
         case .blocked: return .blocked
         case .error: return .error
@@ -90,9 +94,7 @@ enum AgentAttention: Int, Comparable {
         case .waitingOn: return .waiting
         case .gone: return .gone
         case .unknown: return .unknown
-        case .idle:
-            guard let seenAt else { return .idle }
-            return agent.since > seenAt ? .done : .idle
+        case .idle: return .idle
         }
     }
 }
@@ -129,10 +131,8 @@ final class PeerDirectory: ObservableObject {
 
     @Published private(set) var agents: [PeerAgent] = []
     @Published private(set) var unreachable: [String] = []
-    /// 에이전트 key → SEOL이 마지막으로 그 패널을 본 시각. done을 가르는 기준이다.
-    /// 메모리에만 둔다: 앱을 다시 띄우면 그 순간 모두 "본 것"으로 시작한다(놓친 done보다
-    /// 거짓 done이 더 시끄럽다). 재시작을 넘겨 기억해야 하면 window-states에 같이 저장한다.
-    @Published private(set) var seenAt: [String: Date] = [:]
+    /// Fine 노치의 알림 중 SEOL이 손댈 것. 노치 파일이 바뀌면 바로 따라온다.
+    @Published private(set) var notices: [NotchNotice] = []
 
     static let interval: TimeInterval = 2
 
@@ -142,13 +142,27 @@ final class PeerDirectory: ObservableObject {
     private var owners = Set<UUID>()
     private var timer: Timer?
     private var inFlight = false
-    /// 창별로 지금 앞에 보이는 에이전트. 보고 있는 동안 끝난 것은 done이 되지 않는다.
-    private var viewing: [UUID: String] = [:]
+    private let notchFile: URL?
+    /// Fine은 알림 파일을 통째로 바꿔 끼우므로(atomic write) 파일이 아니라 그 폴더를 지켜본다.
+    private let notchWatcher = DirectoryWatcher()
+    private var notchStamp: Date?
+    /// peer가 막힘·오류라고 하는 동안(그 상태가 된 시각까지가 한 번) 노치에 그 알림이 있었던 것, 그리고 있다가
+    /// 사라진 것. 노치에서 지웠으면 sm에서도 내린다 — 에이전트가 아직 그 상태여도. 노치에 한 번도 오지 않은
+    /// 것(맥이 잠든 사이 배달이 빠진 아치 알림 등)은 peer 상태대로 보인다.
+    private var noticedEpisodes = Set<String>()
+    private var dismissedEpisodes = Set<String>()
     private let queue = DispatchQueue(label: "SpaceManager.PeerDirectory", qos: .utility)
 
-    init(command: [String] = PeerDirectory.defaultCommand, localHost: String = PeerDirectory.readLocalHost()) {
+    init(command: [String] = PeerDirectory.defaultCommand, localHost: String = PeerDirectory.readLocalHost(),
+         notchFile: URL? = FineNotch.file) {
         self.command = command
         self.localHost = localHost
+        self.notchFile = notchFile
+        reloadNotch()
+        if let notchFile {
+            notchWatcher.onChange = { [weak self] in self?.reloadNotch() }
+            notchWatcher.start(path: notchFile.deletingLastPathComponent().path)
+        }
     }
 
     static var defaultCommand: [String] {
@@ -193,7 +207,6 @@ final class PeerDirectory: ObservableObject {
 
     func stop(owner: UUID) {
         owners.remove(owner)
-        viewing[owner] = nil
         guard owners.isEmpty else { return }
         AppResourcePolicy.shared.removeObserver(visibilityID)
         setVisible(false)
@@ -211,6 +224,8 @@ final class PeerDirectory: ObservableObject {
     }
 
     func refresh() {
+        // 노치 폴더를 지켜보지 못하는 경우(앱이 Fine보다 먼저 떠 ~/.fine이 없었다)를 위한 2초 확인.
+        if !notchWatcher.isWatching { reloadNotch() }
         guard !inFlight else { return }
         inFlight = true
         let command = command
@@ -234,24 +249,59 @@ final class PeerDirectory: ObservableObject {
                 .map { row -> PeerAgent in var row = row; row.isStale = true; return row }
             rows += kept
         }
-        var seen = seenAt
-        for row in rows where seen[row.key] == nil { seen[row.key] = now }
-        for key in viewing.values { seen[key] = now }
-        let live = Set(rows.map(\.key))
-        seen = seen.filter { live.contains($0.key) }
-        if seen != seenAt { seenAt = seen }
         if rows != agents { agents = rows }
         if listing.unreachable != unreachable { unreachable = listing.unreachable }
+        reconcileEpisodes()
+    }
+
+    /// 노치 파일을 다시 읽는다(바뀌었을 때만). 파일이 없으면 노치에 아무것도 없는 것이다.
+    func reloadNotch() {
+        guard let notchFile else { return }
+        let stamp = (try? notchFile.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        guard stamp != notchStamp || stamp == nil else { return }
+        notchStamp = stamp
+        applyNotch(FineNotch.load(notchFile) ?? [])
+    }
+
+    func applyNotch(_ items: [NotchNotice]) {
+        let next = items.filter(\.needsSEOL)
+        if next != notices { notices = next }
+        reconcileEpisodes()
+    }
+
+    /// 이 에이전트를 가리키는 노치 알림(여럿이면 가장 최근 것).
+    func notice(for agent: PeerAgent) -> NotchNotice? {
+        notices.filter { $0.refers(to: agent, localHost: localHost) }.max { $0.updatedAt < $1.updatedAt }
+    }
+
+    /// 에이전트가 없는 패널(셸, Quick)이 올린 터미널 알림(TerminalSession.terminalNoticeKey).
+    func terminalNotice(for session: TerminalSession) -> NotchNotice? {
+        notices.first { $0.key == session.terminalNoticeKey }
     }
 
     func attention(of agent: PeerAgent) -> AgentAttention {
-        AgentAttention.of(agent, seenAt: seenAt[agent.key])
+        if let notice = notice(for: agent) { return notice.state == "error" ? .error : .blocked }
+        let own = AgentAttention.of(agent)
+        if own.needsSEOL, dismissedEpisodes.contains(Self.episode(agent)) { return .idle }
+        return own
     }
 
-    /// 창이 지금 앞에 보여 주는 에이전트를 알린다(nil이면 없음). 보는 순간 done이 풀린다.
-    func setViewing(_ key: String?, owner: UUID) {
-        viewing[owner] = key
-        if let key { seenAt[key] = Date() }
+    private static func episode(_ agent: PeerAgent) -> String { agent.key + "@" + String(agent.since.timeIntervalSince1970) }
+
+    private func reconcileEpisodes() {
+        var live = Set<String>()
+        for agent in agents where AgentAttention.of(agent).needsSEOL {
+            let episode = Self.episode(agent)
+            live.insert(episode)
+            if notice(for: agent) != nil {
+                noticedEpisodes.insert(episode)
+            } else if noticedEpisodes.contains(episode), !dismissedEpisodes.contains(episode) {
+                dismissedEpisodes.insert(episode)
+                objectWillChange.send()
+            }
+        }
+        noticedEpisodes.formIntersection(live)
+        dismissedEpisodes.formIntersection(live)
     }
 
     private static func run(_ command: [String]) -> PeerListing? {

@@ -4,11 +4,10 @@ import AppKit
 /// 에이전트 상태 표시. 색만이 아니라 모양으로도 갈린다 — 곁눈으로 봐도 구분되고,
 /// 사이드바의 "최근 대화" 분홍 점(진하기로 최근성을 말한다)과도 겹치지 않는다.
 ///
-/// - 막힘(SEOL의 답을 기다림): 분홍 느낌표 원
+/// - SEOL 차례(노치에 뜬 것: 권한·질문·에이전트가 부른 것): 분홍 느낌표 원
 /// - 오류·턴 실패: 호박색 삼각형
 /// - 일하는 중: 분홍 회전 링(렌더 서버에서 돈다)
-/// - 끝났는데 아직 안 봄: 글자색 점
-/// - 쉼·다른 에이전트 대기·모름: 표시 없음. 대부분이 여기라 위의 넷이 보인다.
+/// - 쉼·다른 에이전트 대기·모름: 표시 없음. 대부분이 여기라 위의 셋이 보인다.
 struct AgentStateMark: View {
     let attention: AgentAttention?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -35,9 +34,6 @@ struct AgentStateMark: View {
             case .working:
                 StateSpinner().frame(width: 11, height: 11)
                     .transition(change)
-            case .done:
-                Circle().fill(Color(Chrome.textPrimary)).frame(width: 5, height: 5)
-                    .transition(change)
             default:
                 EmptyView()
             }
@@ -49,10 +45,9 @@ struct AgentStateMark: View {
 
     static func spokenName(_ attention: AgentAttention) -> String {
         switch attention {
-        case .blocked: "답을 기다림"
+        case .blocked: "SEOL 차례"
         case .error: "오류"
         case .working: "일하는 중"
-        case .done: "끝남, 아직 안 봄"
         case .waiting: "다른 에이전트를 기다림"
         case .idle: "쉬는 중"
         case .gone: "종료됨"
@@ -73,8 +68,10 @@ struct PaneBadge: Equatable {
     var attention: AgentAttention?
     /// 막힌 이유(권한·질문), 기다리는 상대 이름 같은 짧은 말.
     var detail: String?
-    /// 지금 상태가 된 시각. 손이 갈 상태(막힘·끝남·오류)에서만 경과 시간을 보인다.
+    /// 지금 상태가 된 시각. 손이 갈 상태(막힘·오류)에서만 경과 시간을 보인다.
     var since: Date?
+    /// 이 패널의 노치 알림. 있으면 이름표 끝에 지우기(×)가 붙는다 — 노치의 ×와 같은 일을 한다.
+    var notice: NotchNotice?
 
     init(title: String, attention: AgentAttention? = nil, detail: String? = nil, since: Date? = nil) {
         self.title = title
@@ -83,10 +80,17 @@ struct PaneBadge: Equatable {
         self.since = since
     }
 
-    init(agent: PeerAgent, attention: AgentAttention, title: String? = nil) {
+    init(agent: PeerAgent, attention: AgentAttention, notice: NotchNotice? = nil, title: String? = nil) {
         self.title = title ?? agent.name
         self.attention = attention
         self.since = agent.since
+        if let notice {
+            // 노치와 같은 말, 같은 시각.
+            self.notice = notice
+            self.detail = notice.shortLabel
+            self.since = notice.updatedAt
+            return
+        }
         switch attention {
         case .blocked:
             switch agent.reason {
@@ -98,6 +102,13 @@ struct PaneBadge: Equatable {
         case .waiting: detail = agent.waitingOn.map { "\($0) 대기" }
         default: detail = nil
         }
+    }
+
+    /// 에이전트가 없는 패널의 터미널 알림.
+    init(title: String, notice: NotchNotice) {
+        self.init(title: title, attention: notice.state == "error" ? .error : .blocked,
+                  detail: notice.shortLabel, since: notice.updatedAt)
+        self.notice = notice
     }
 
     var showsAge: Bool { attention?.needsSEOL == true && since != nil }
@@ -115,11 +126,13 @@ struct PaneBadge: Equatable {
         if let attention { parts.append(AgentStateMark.spokenName(attention)) }
         if let detail { parts.append(detail) }
         if let since, showsAge { parts.append(Self.age(since: since) + " 전부터") }
-        return parts.joined(separator: " · ")
+        var help = parts.joined(separator: " · ")
+        if let notice { help += "\n" + notice.detailText }
+        return help
     }
 }
 
-/// 워크스페이스 줄의 상태 칸. 손이 갈 상태(막힘·오류·안 본 끝남)가 있으면 그것을, 없으면 지금처럼
+/// 워크스페이스 줄의 상태 칸. 손이 갈 상태(막힘·오류)가 있으면 그것을, 없으면 지금처럼
 /// 최근 대화 점(진하기 = 최근성)을 그린다. 일하는 중은 원래 점의 스피너가 그대로 맡는다.
 struct WorkspaceStatusMark: View {
     let attention: AgentAttention?

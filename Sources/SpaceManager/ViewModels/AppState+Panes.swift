@@ -193,9 +193,18 @@ extension AppState {
     /// 탭 하나(나눈 패널 전부 포함)의 상태.
     func agentRollup(forTab tab: TerminalSession, directory: PeerDirectory) -> AgentAttention? {
         paneSessions(of: tab)
-            .compactMap { directory.agent(for: $0, includeStale: true) }
-            .map(directory.attention(of:))
+            .compactMap { pane in
+                directory.agent(for: pane, includeStale: true).map(directory.attention(of:))
+                    ?? directory.terminalNotice(for: pane).map { $0.state == "error" ? .error : .blocked }
+            }
             .max()
+    }
+
+    /// 탭 하나의 노치 알림들.
+    func notices(forTab tab: TerminalSession, directory: PeerDirectory) -> [NotchNotice] {
+        paneSessions(of: tab).compactMap { pane in
+            directory.agent(for: pane, includeStale: true).flatMap(directory.notice(for:)) ?? directory.terminalNotice(for: pane)
+        }
     }
 
     /// 탭의 패널들(나누지 않았으면 탭 자신).

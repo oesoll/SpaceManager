@@ -172,16 +172,6 @@ private struct TabSurfaceContent: View {
         .onChange(of: appState.selectedWorkspace?.id) { _, _ in
             closeLegacyTerminalsIfLayoutShown()
         }
-        .onChange(of: viewingKey) { _, key in
-            directory.setViewing(key, owner: appState.windowStateId)
-        }
-    }
-
-    /// 지금 앞에 보이는 에이전트 — 나눈 탭이면 포커스된 패널, 아니면 탭 자신.
-    private var viewingKey: String? {
-        guard appState.windowKind == .workspace, let tab = appState.selectedSession else { return nil }
-        let pane = panes.group(for: tab)?.focusedSession ?? tab
-        return directory.agent(for: pane, includeStale: true)?.key
     }
 }
 
@@ -241,9 +231,10 @@ private struct SplitTab: View {
     var body: some View {
         TabPanesView(group: group, badge: { session in
             guard let agent = directory.agent(for: session, includeStale: true) else {
-                return PaneBadge(title: session.name)
+                return directory.terminalNotice(for: session).map { PaneBadge(title: session.name, notice: $0) }
+                    ?? PaneBadge(title: session.name)
             }
-            return PaneBadge(agent: agent, attention: directory.attention(of: agent))
+            return PaneBadge(agent: agent, attention: directory.attention(of: agent), notice: directory.notice(for: agent))
         }, picker: { id in
             AnyView(picker(for: id))
         })
@@ -293,7 +284,8 @@ struct TabStripBar: View {
         var items = layout.tabs.map { tab in
             WorkspaceTabStrip.Item(id: tab.id, name: tab.name, isActive: tab.id == active,
                                    attention: appState.layoutRollup(tab: tab, in: layout, directory: peers),
-                                   isZoomed: tab.zoom != nil, canClose: layout.tabs.count > 1)
+                                   isZoomed: tab.zoom != nil, canClose: layout.tabs.count > 1,
+                                   notices: appState.layoutNotices(tab: tab, in: layout, directory: peers).map(\.id))
         }
         if picking {
             items.append(.init(id: "pending-tab", name: "새 탭", isActive: true, isPending: true, canClose: false))
@@ -317,7 +309,8 @@ struct TabStripBar: View {
                 WorkspaceTabStrip.Item(id: session.id.uuidString, name: session.name,
                                        isActive: appState.selectedSession?.id == session.id,
                                        attention: appState.agentRollup(forTab: session, directory: peers),
-                                       canClose: session.kind != .tmuxMain)
+                                       canClose: session.kind != .tmuxMain,
+                                       notices: appState.notices(forTab: session, directory: peers).map(\.id))
             },
             onSelect: { id in
                 if let session = appState.sessions.first(where: { $0.id.uuidString == id }) { appState.selectSession(session) }

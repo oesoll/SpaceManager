@@ -117,6 +117,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
             guard let self, let view, self.started else { return }
             self.surfaceExited(view, code: code, connectedFor: Date().timeIntervalSince(launchedAt))
         }
+        view.onNotification = { [weak self] title, body in self?.postTerminalNotice(title: title, body: body) }
         if view.failedToStart {
             startError = "터미널을 시작하지 못했습니다 (libghostty 표면 생성 실패)"
             isRunning = false
@@ -358,6 +359,56 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     }
 
     private var wakeObserver: NSObjectProtocol?
+
+    // MARK: 터미널 알림 → Fine 노치
+
+    /// 이 패널의 노치 항목 key. Fine이 자기 탭에 쓰는 모양(`terminal:<탭 UUID>`)과 같다.
+    var terminalNoticeKey: String { "terminal:" + id.uuidString.lowercased() }
+    private var noticeFields: [String: String]?
+    private var noticeInputMonitor: Any?
+
+    /// 터미널 프로그램이 보낸 알림(OSC 9/777)을 Fine 탭처럼 노치에 이 패널의 항목으로 올린다 — 전에는 sm이
+    /// 버려서, 같은 프로그램이 Fine 탭에서는 노치에 뜨고 sm 패널에서는 아무 데도 안 떴다. 에이전트 패널이면
+    /// 노치를 눌렀을 때 이 패널이 열리도록(`sm reveal`) 그 에이전트를 주소로 단다.
+    private func postTerminalNotice(title: String, body: String) {
+        let message = body.isEmpty ? title : body
+        guard !message.isEmpty else { return }
+        var fields = ["key": terminalNoticeKey, "title": title.isEmpty ? name : String(title.prefix(300)),
+                      "message": String(message.prefix(4000)), "state": "waiting"]
+        if case .agent(let agentName, let host, _) = attachment {
+            fields["source"] = "sm:" + agentName
+            fields["host"] = host
+        }
+        noticeFields = fields
+        FineNotch.post(fields)
+        watchInputForNotice()
+    }
+
+    /// SEOL이 이 패널에 입력하면 그 알림을 내린다 — seol-notch 알림이 그 칸의 다음 입력에 내려가는 것과 같다.
+    /// 알림이 떠 있는 동안에만 키를 엿본다.
+    private func watchInputForNotice() {
+        guard noticeInputMonitor == nil else { return }
+        noticeInputMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if let self, let view = self.terminalView, event.window?.firstResponder === view { self.clearTerminalNotice() }
+            return event
+        }
+    }
+
+    private func stopWatchingInputForNotice() {
+        if let noticeInputMonitor { NSEvent.removeMonitor(noticeInputMonitor) }
+        noticeInputMonitor = nil
+    }
+
+    func clearTerminalNotice() {
+        stopWatchingInputForNotice()
+        guard var fields = noticeFields else { return }
+        noticeFields = nil
+        // 노치에서 이미 지웠으면 다시 올리지 않는다(done도 30초 동안 한 줄로 남는다).
+        guard PeerDirectory.shared.notices.contains(where: { $0.key == terminalNoticeKey }) else { return }
+        fields["state"] = "done"
+        fields["message"] = "이어서 진행하고 있어요."
+        FineNotch.post(fields)
+    }
     static let afterWake: TimeInterval = 3
 
     /// 새 연결이 원격 화면을 보내기 시작했다 — 배지를 내리고 입력을 다시 받는다.
@@ -412,6 +463,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
 
     func cleanup(force: Bool = false) {
         started = false
+        stopWatchingInputForNotice()
         cancelReconnectTimer()
         isReconnecting = false
         try? FileManager.default.removeItem(atPath: sshErrorLogPath)
@@ -436,6 +488,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     }
 
     deinit {
+        if let noticeInputMonitor { NSEvent.removeMonitor(noticeInputMonitor) }
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
         reconnectTimer?.invalidate()
         pendingTimer?.invalidate()
