@@ -19,7 +19,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("control server unavailable: \(error)")
         }
         // 화면 노치. Fine이 아직 노치를 가졌으면 넘겨 주기만 하고, 걷어 냈으면 이어받는다(NotchOwner).
-        MainActor.assumeIsolated { NotchOwner.shared.start() }
+        MainActor.assumeIsolated {
+            NotchOwner.shared.start()
+            // 메뉴 막대의 sm 아이콘: 누르면 창 전부 숨기기, 다시 누르면 보이기.
+            StatusBarToggle.shared.install()
+        }
         // 라이트/다크는 창별(AppState.preferredAppearance → NSWindow.appearance) —
         // 전역 NSApp.appearance는 건드리지 않는다
     }
@@ -30,6 +34,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // 메뉴 막대 아이콘으로 숨긴 채 Dock을 누르면, 숨긴 창을 그대로 되돌린다.
+        let restored = MainActor.assumeIsolated { () -> Bool in
+            guard StatusBarToggle.shared.isHiding else { return false }
+            StatusBarToggle.shared.reveal()
+            return true
+        }
+        if restored { return true }
         if !flag {
             NSApp.windows.first?.makeKeyAndOrderFront(nil)
         }
