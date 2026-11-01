@@ -323,7 +323,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     func handleExit(exitCode: Int32, connectedFor: TimeInterval) {
         guard let delay = RemoteReconnectPolicy.delay(kind: kind, remoteHost: remoteHost,
             exitCode: exitCode, attempt: reconnectAttempt, connectedFor: connectedFor,
-            remoteAgent: attachesRemoteAgent) else {
+            agentPane: attachesAgent) else {
             // detach(0)처럼 의도된 종료는 재시도 배지를 남기지 않는다.
             isReconnecting = false
             return
@@ -338,10 +338,10 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         }
     }
 
-    /// 다른 기기의 에이전트에 ssh로 붙은 패널인가(`sm-session attach NAME@arch`).
-    private var attachesRemoteAgent: Bool {
-        guard case .agent(_, let host, _) = attachment else { return false }
-        return host != PeerDirectory.shared.localHostName
+    /// 세션 층의 세션을 보이는 패널인가(`sm-session attach NAME@HOST`, 이 맥이든 다른 기기든).
+    private var attachesAgent: Bool {
+        if case .agent = attachment { return true }
+        return false
     }
 
     /// 맥이 깨어나면 다시 붙기를 기다리던 패널은 대기를 버리고 곧 다시 시도한다 — 잠든 사이 쌓인 대기
@@ -542,15 +542,16 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
 /// Only a persistent remote attachment is retried. A deliberate detach (0),
 /// a shell exit or a Quick conversation must stay closed. Cap retries while a host sleeps.
 ///
-/// A pane attached to an agent on another machine (`sm-session attach NAME@arch`) is retried only when
-/// ssh itself failed (255) — after the Mac slept, the connection was gone and the pane stayed dead
-/// (10/31). Other exits mean the session ended: `sm stop` ends the attach with 143, the agent quitting
-/// with its own code, and reattaching would resume what was stopped on purpose.
+/// A pane showing a session-layer session (`sm-session attach NAME@HOST`) is attached again whenever its
+/// attach ends, whatever the code. The attach itself no longer ends when the session stops or sleeps: it
+/// keeps the last screen and waits for a key in that pane (11/01, harness-w1-2). So an attach that ended
+/// was cut from outside — ssh dropped while the Mac slept, the process was killed when SEOL shut sessions
+/// down for quota — and the pane would otherwise stay dead. Attaching again never starts the session by
+/// itself, so this cannot spend quota. A closed pane is not retried (cleanup stops it first).
 enum RemoteReconnectPolicy {
     static func delay(kind: TabKind, remoteHost: String?, exitCode: Int32,
-                      attempt: Int, connectedFor: TimeInterval, remoteAgent: Bool = false) -> TimeInterval? {
-        if remoteAgent {
-            guard exitCode == 255 else { return nil }
+                      attempt: Int, connectedFor: TimeInterval, agentPane: Bool = false) -> TimeInterval? {
+        if agentPane {
             return min(30, 3 * pow(2, Double(connectedFor >= 30 ? 0 : min(4, max(0, attempt)))))
         }
         guard kind == .tmuxMain || kind == .tmuxExtra,

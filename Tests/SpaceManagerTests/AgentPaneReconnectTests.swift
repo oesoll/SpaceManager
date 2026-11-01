@@ -9,6 +9,16 @@ import XCTest
 @MainActor
 final class AgentPaneReconnectTests: XCTestCase {
     func testRemotePaneReattachesAfterSshDrops() throws {
+        try reattaches(host: "arch-elsewhere", firstExit: 255)
+    }
+
+    /// 이 맥의 세션 패널도 attach가 끝나면 다시 붙는다. SEOL이 쿼타 때문에 세션을 껐다 되살렸는데 sm 창이
+    /// 죽어 있었다(11/01) — attach가 죽은 패널을 다시 띄우지 않았다.
+    func testLocalPaneReattachesAfterItsAttachEnds() throws {
+        try reattaches(host: PeerDirectory.shared.localHostName, firstExit: 0)
+    }
+
+    private func reattaches(host: String, firstExit: Int32) throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["SM_CAPTURE"] == "1", "set SM_CAPTURE=1")
         let realHome = URL(fileURLWithPath: String(cString: getpwuid(getuid())!.pointee.pw_dir))
         try XCTSkipIf(URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL == realHome.standardizedFileURL,
@@ -21,7 +31,7 @@ final class AgentPaneReconnectTests: XCTestCase {
         try """
         #!/bin/sh
         n=$(cat '\(count.path)' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '\(count.path)'
-        if [ "$n" -eq 1 ]; then printf 'first\\n'; sleep 1; exit 255; fi
+        if [ "$n" -eq 1 ]; then printf 'first\\n'; sleep 1; exit \(firstExit); fi
         printf 'again %s\\n' "$n"; exec sleep 60
         """.write(to: fake, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
@@ -31,7 +41,7 @@ final class AgentPaneReconnectTests: XCTestCase {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
         let session = TerminalSession(kind: .shell, name: "qa", workingDirectory: NSHomeDirectory(),
-                                      attachment: .agent(name: "qa", host: "arch-elsewhere", agent: nil))
+                                      attachment: .agent(name: "qa", host: host, agent: nil))
         let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 400, height: 120), styleMask: [.borderless],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -50,7 +60,7 @@ final class AgentPaneReconnectTests: XCTestCase {
             return condition()
         }
         XCTAssertTrue(wait(5) { attaches() >= 1 }, "the pane never attached")
-        XCTAssertTrue(wait(5) { session.isReconnecting }, "ssh dropped (255) but the pane did not start reconnecting")
+        XCTAssertTrue(wait(5) { session.isReconnecting }, "the attach ended (\(firstExit)) but the pane did not start reconnecting")
         XCTAssertTrue(wait(10) { attaches() >= 2 }, "the pane did not attach again")
         XCTAssertTrue(wait(5) { !session.isReconnecting }, "the new connection was never taken")
         XCTAssertTrue(wait(3) { (session.terminalView?.readText(lastLines: 5) ?? "").contains("again") },

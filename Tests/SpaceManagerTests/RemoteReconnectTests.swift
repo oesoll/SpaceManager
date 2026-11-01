@@ -61,19 +61,18 @@ final class RemoteReconnectTests: XCTestCase {
         XCTAssertNil(RemoteReconnectPolicy.delay(kind: .tmuxMain, remoteHost: nil, exitCode: 1, attempt: 0, connectedFor: 1))
     }
 
-    /// 다른 기기의 에이전트에 붙은 패널: ssh가 끊겼을 때(255)만 다시 붙는다. 맥이 잠든 사이 연결이 사라지고
-    /// 패널이 끊긴 채로 남았다(10/31). 그 밖의 종료는 세션이 끝난 것이다 — 실측: `sm stop` 143, 에이전트
-    /// 정상 종료 0, 붙들기가 죽음 1. 다시 붙으면 일부러 멈춘 세션을 되살린다.
-    func testRemoteAgentPaneRetriesOnlyWhenSshDropped() {
-        XCTAssertEqual(RemoteReconnectPolicy.delay(kind: .shell, remoteHost: nil, exitCode: 255, attempt: 0,
-                                                   connectedFor: 3600, remoteAgent: true), 3)
-        XCTAssertEqual(RemoteReconnectPolicy.delay(kind: .shell, remoteHost: nil, exitCode: 255, attempt: 9,
-                                                   connectedFor: 1, remoteAgent: true), 30)
-        for code: Int32 in [0, 1, 143] {
-            XCTAssertNil(RemoteReconnectPolicy.delay(kind: .shell, remoteHost: nil, exitCode: code, attempt: 0,
-                                                     connectedFor: 1, remoteAgent: true), "exit \(code) must stay closed")
+    /// 세션을 보이는 패널(이 맥이든 아치든)은 attach가 끝나면 코드와 상관없이 다시 붙는다. attach는 세션이
+    /// 멈추거나 잠들어도 끝나지 않고 기다리므로, 끝났다면 밖에서 끊긴 것이다 — 맥이 잠든 사이 ssh(255),
+    /// SEOL이 쿼타 때문에 세션을 껐을 때 죽은 프로세스(11/01). 다시 붙어도 키를 누르기 전엔 세션이 시작되지 않는다.
+    func testAgentPaneAlwaysAttachesAgain() {
+        for code: Int32 in [0, 1, 143, 255] {
+            XCTAssertEqual(RemoteReconnectPolicy.delay(kind: .shell, remoteHost: nil, exitCode: code, attempt: 0,
+                                                       connectedFor: 3600, agentPane: true), 3, "exit \(code)")
         }
-        // 이 기기의 에이전트 패널은 ssh를 거치지 않으니 그대로 둔다.
+        // 붙자마자 계속 끝나면 30초까지 늦춘다(없어진 세션에 1초마다 붙지 않게).
+        XCTAssertEqual(RemoteReconnectPolicy.delay(kind: .shell, remoteHost: nil, exitCode: 1, attempt: 9,
+                                                   connectedFor: 1, agentPane: true), 30)
+        // 세션이 아닌 셸 패널은 그대로 닫힌 채 둔다.
         XCTAssertNil(RemoteReconnectPolicy.delay(kind: .shell, remoteHost: nil, exitCode: 255, attempt: 0, connectedFor: 1))
     }
 
