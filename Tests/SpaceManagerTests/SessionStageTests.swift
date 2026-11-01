@@ -121,4 +121,54 @@ final class SessionStageTests: XCTestCase {
         XCTAssertTrue(wait(5) { get("count") == "4" }, "showing it again did not attach")
         XCTAssertTrue(wait(6) { !stage.isCovered }, "it did not lift after attaching again")
     }
+
+    /// 세션 층 파일이 잠깐 없을 때(배포 중) 보인 패널: 상태 스트림을 다시 시도해, 파일이 돌아오면 저절로 깨어난다.
+    /// 전에는 한 번 실패하면 켜진 채 아무것도 듣지 않아 앱을 다시 켤 때까지 빈 패널이었다(11/01 sm-front).
+    func testAShownPaneRetriesWhenTheSessionLayerIsMissingForAMoment() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["SM_CAPTURE"] == "1", "set SM_CAPTURE=1")
+        let realHome = URL(fileURLWithPath: String(cString: getpwuid(getuid())!.pointee.pw_dir))
+        try XCTSkipIf(URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL == realHome.standardizedFileURL,
+                      "run through scripts/test-isolated.sh")
+        // attach도 ~/.smux/bin/sm-session을 부르므로 같은 자리(격리된 홈)에 가짜를 둔다 — 처음엔 없다.
+        let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".smux/bin").path
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(atPath: dir + "/sm-session")
+        defer { try? FileManager.default.removeItem(atPath: dir + "/sm-session") }
+        func wait(_ timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if condition() { return true }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            }
+            return condition()
+        }
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        let session = TerminalSession(kind: .shell, name: "qa", workingDirectory: NSHomeDirectory(),
+                                      attachment: .agent(name: "qa", host: "mac", agent: nil))
+        let director = try XCTUnwrap(session.stageDirector)
+        director.sessionLayer = dir + "/sm-session"
+        let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 480, height: 160), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = TerminalHostView(frame: NSRect(x: 0, y: 0, width: 480, height: 160))
+        window.contentView = host
+        window.orderFrontRegardless()
+        host.showStage(director.stage)
+        defer { session.cleanup(force: true); window.close() }
+
+        director.begin()
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        try """
+        #!/bin/sh
+        case "$1" in
+        state) printf '{"name":"qa","state":"ready","at":0}\\n'; exec sleep 30 ;;
+        screen) printf 'LAST\\r\\n' ;;
+        attach) printf 'attached\\n'; exec cat ;;
+        esac
+        """.write(toFile: dir + "/sm-session", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir + "/sm-session")
+        XCTAssertTrue(wait(8) { !director.stage.isCovered && director.stage.live != nil },
+                      "the layer came back but the pane never attached")
+    }
 }

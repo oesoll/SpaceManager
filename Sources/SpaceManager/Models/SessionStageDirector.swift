@@ -272,7 +272,20 @@ final class SessionStageDirector {
                 }
             }
         }
-        do { try process.run() } catch { return }
+        do {
+            try process.run()
+        } catch {
+            // 세션 층을 띄우지 못했다(배포 중에 파일이 잠깐 없었다 등). 보이는 동안 다시 시도한다 — 그냥 돌아가면
+            // 켜진 채로 아무것도 듣지 않아, 패널이 앱을 다시 켤 때까지 텅 빈 채였다(11/01 sm-front 워크스페이스).
+            output.fileHandleForReading.readabilityHandler = nil
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.isActive else { return }
+                self.watch()
+            }
+            watchRestart = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+            return
+        }
         watcher = process
     }
 
