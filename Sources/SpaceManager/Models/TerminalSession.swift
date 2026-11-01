@@ -155,6 +155,8 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     private func launchEnvironment() -> (set: [String: String], unset: [String]) {
         let base = ProcessInfo.processInfo.environment
         var env = base
+        // 사용자 셸의 PATH — 앱이 Finder로 떠도 패널 안에서 ccv·sm-session 같은 사용자 명령을 찾는다.
+        env["PATH"] = UserShellEnvironment.path
         // peer가 이 터미널의 에이전트를 sm 패널(`sm:<UUID>`)로 찾는 고리. tmux 탭에는 넣지 않는다 —
         // 새로 뜨는 tmux 서버가 전역 환경으로 물려받아 모든 패널이 이 탭을 자기 것이라 주장한다.
         if kind == .shell {
