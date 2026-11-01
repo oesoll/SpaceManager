@@ -35,14 +35,23 @@ final class SessionStageDirector {
     private var reconnectAttempt = 0
     /// 일부러 내린 attach(멈춤·가려짐) — 그 끝남은 끊김이 아니다.
     private var endedOnPurpose = Set<ObjectIdentifier>()
+    /// 얼린 화면 아래에서 다시 붙는 동안, 오래 걸리면 "연결 중" 모습으로 바꾸는 예약.
+    private var connectingLook: DispatchWorkItem?
+    /// 빠르게 다시 붙으면(대부분) 막도 빛도 없이 얼린 화면이 그대로 걷힌다. 이보다 오래 걸릴 때만 "연결 중"을 보인다
+    /// — 탭을 오갈 때마다 빛이 번쩍이면 오히려 거슬린다.
+    static let connectingAfter: TimeInterval = 0.3
 
     init(target: String, makeSurface: @escaping () -> GhosttyTerminalView) {
         self.target = target
         self.makeSurface = makeSurface
         stage.onKeyWhileResting = { [weak self] in self?.wakeByKey() }
         stage.onReveal = { [weak self] in
-            self?.reconnectAttempt = 0
-            self?.onReconnecting(false)
+            guard let self else { return }
+            self.reconnectAttempt = 0
+            self.connectingLook?.cancel()
+            self.connectingLook = nil
+            self.stage.caption = nil
+            self.onReconnecting(false)
         }
     }
 
@@ -63,6 +72,7 @@ final class SessionStageDirector {
         isActive = false
         stopWatch()
         cancelReconnect()
+        cancelConnectingLook()
         if let live = stage.live { endOnPurpose(live) }
         stage.freeze(look: .clear)
         onLiveChange(nil)
@@ -74,6 +84,7 @@ final class SessionStageDirector {
         isActive = false
         stopWatch()
         cancelReconnect()
+        cancelConnectingLook()
         stage.clear()
         onLiveChange(nil)
         state = nil
@@ -128,15 +139,34 @@ final class SessionStageDirector {
         stage.attach(view)
         onLiveChange(view)
         if state == "ready" || state == "tmux" { stage.revealWhenQuiet() }
+        // 얼린 화면 아래에서 다시 붙는 중(가려졌다 다시 봄): 오래 걸리면 깨울 때와 같은 "연결 중" 모습.
+        if stage.isCovered && stage.look == .clear { scheduleConnectingLook() }
+    }
+
+    private func scheduleConnectingLook() {
+        cancelConnectingLook()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isActive, self.stage.isCovered, self.stage.look == .clear else { return }
+            self.stage.setLook(.waking)
+        }
+        connectingLook = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.connectingAfter, execute: work)
+    }
+
+    private func cancelConnectingLook() {
+        connectingLook?.cancel()
+        connectingLook = nil
     }
 
     /// 표면의 자식(attach)이 끝났다.
     func surfaceExited(_ view: GhosttyTerminalView) {
         if endedOnPurpose.remove(ObjectIdentifier(view)) != nil { return }
         guard isActive, view === stage.live else { return }
-        // 밖에서 끊겼다(ssh, 강제 종료). 마지막 화면을 장면으로 두고 다시 붙는다 — 세션 층의 attach는 세션이
-        // 멈추거나 잠들어도 끝나지 않으므로, 끝났다면 다시 붙는 것이 맞다.
-        stage.freeze(look: .clear)
+        // 밖에서 끊겼다(ssh — 맥이 잠들었거나 연결이 오래 조용했다, 강제 종료). 마지막 화면을 얼리고 깨울 때와
+        // 같은 "연결 중" 모습으로 둔 채 다시 붙는다(SEOL 11/01). 세션 층의 attach는 세션이 멈추거나 잠들어도
+        // 끝나지 않으므로, 끝났다면 다시 붙는 것이 맞다. 끊긴 동안은 세션 층에 물을 수 없어 이 상태는 앱이 정한다.
+        stage.freeze(look: .waking)
+        stage.caption = "다시 연결하는 중"
         onLiveChange(nil)
         onReconnecting(true)
         let delay = min(30, 3 * pow(2, Double(min(4, reconnectAttempt))))

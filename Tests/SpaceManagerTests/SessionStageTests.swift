@@ -103,7 +103,21 @@ final class SessionStageTests: XCTestCase {
         let pid = try XCTUnwrap(stage.live?.foregroundProcessIdentifier)
         kill(pid, SIGKILL)
         XCTAssertTrue(wait(3) { session.isReconnecting }, "a cut attach did not start reconnecting")
+        // 끊긴 동안은 깨울 때와 같은 "연결 중" 모습(얼린 화면 + 막 + 빛 + 글).
+        XCTAssertTrue(stage.isCovered)
+        XCTAssertEqual(stage.look, .waking)
+        XCTAssertEqual(stage.caption, "다시 연결하는 중")
         XCTAssertTrue(wait(8) { get("count") == "3" }, "it did not attach again")
         XCTAssertTrue(wait(6) { !stage.isCovered && !session.isReconnecting })
+        XCTAssertNil(stage.caption)
+
+        // 6. 오래 가려졌다(내림) 다시 봄: 얼린 화면 아래에서 다시 붙고, 빨리 붙으면 막 없이 그대로 걷힌다.
+        director.park()
+        XCTAssertTrue(stage.isCovered)
+        XCTAssertEqual(stage.look, .clear, "a parked pane keeps its frame without a veil")
+        XCTAssertNil(session.terminalView)
+        director.begin()
+        XCTAssertTrue(wait(5) { get("count") == "4" }, "showing it again did not attach")
+        XCTAssertTrue(wait(6) { !stage.isCovered }, "it did not lift after attaching again")
     }
 }

@@ -27,7 +27,7 @@ final class StageDemoTests: XCTestCase {
         screen) cat "$dir/screen" ;;
         attach) n=$(cat "$dir/count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$dir/count"
           if [ "$n" -gt 1 ]; then
-            printf 'Claude Code 다시 시작 중…\\r\\n'; sleep 0.8; printf '\\033[2J\\033[H'; sleep 0.3
+            sleep 1.1; printf '\\033[2J\\033[H'; sleep 0.2
             split -b 9000 "$dir/screen" "$dir/part."; for p in "$dir"/part.*; do cat "$p"; sleep 0.12; done; rm -f "$dir"/part.*
           else cat "$dir/screen"; fi
           exec cat >/dev/null ;;
@@ -76,10 +76,20 @@ final class StageDemoTests: XCTestCase {
                                                  timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                                                  context: nil, characters: "a", charactersIgnoringModifiers: "a",
                                                  isARepeat: false, keyCode: 0))
-        director.stage.keyDown(with: key) // 키 → 깨는 중(빛이 돈다, 아래에서 다시 채움)
-        run(7.0)
-        try put("ctl", "ready")          // 준비됨 → 조용해지면 걷힘
-        run(4.0)
+        if env["SM_STAGE_DEMO_KIND"] == "reconnect" {
+            // 연결이 끊김(맥이 잠들었다 깸 등) → "다시 연결하는 중" → 다시 붙어 조용해지면 걷힘.
+            try put("ctl", "ready")
+            run(1.0)
+            director.stage.reveal(animated: false)
+            run(1.5)
+            if let pid = director.stage.live?.foregroundProcessIdentifier { kill(pid, SIGKILL) }
+            run(10.0)
+        } else {
+            director.stage.keyDown(with: key) // 키 → 깨는 중(빛이 돈다, 아래에서 다시 채움)
+            run(7.0)
+            try put("ctl", "ready")          // 준비됨 → 조용해지면 걷힘
+            run(4.0)
+        }
         record.waitUntilExit()
         XCTAssertTrue(FileManager.default.fileExists(atPath: out))
     }

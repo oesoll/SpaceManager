@@ -20,7 +20,8 @@ struct AgentTerminalView: View {
             // 재연결 중에도 터미널을 그대로 둔다 — 끊기기 전 마지막 화면 위에 문구만 얹는다.
             SessionTerminalWrapper(session: session)
                 .overlay(alignment: .topTrailing) {
-                    if session.isReconnecting {
+                    // 무대가 맡은 패널은 무대가 "연결 중"을 보인다(얼린 화면·막·빛·글).
+                    if session.isReconnecting && session.stageDirector == nil {
                         ReconnectingBadge(detail: session.lastConnectionFailure) {
                             session.reconnectIfNeeded()
                         }
