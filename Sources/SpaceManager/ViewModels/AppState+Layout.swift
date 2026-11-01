@@ -99,6 +99,11 @@ final class LayoutTerminals {
         }
     }
 
+    /// 보이는 패널 중 내려 둔 세션 패널(무대가 쉬는 중)을 다시 붙인다.
+    func resume(displayed: Set<String>) {
+        for key in displayed { sessions[key]?.resumeIfParked() }
+    }
+
     /// 내릴 패널: attach가 붙은 세션 패널 가운데 지금 안 보이고, 마지막으로 보인 지 `grace`가 지난 것.
     static func toPark(attached: Set<String>, displayed: Set<String>, lastDisplayed: [String: Date],
                        now: Date, grace: TimeInterval) -> [String] {
@@ -432,8 +437,19 @@ extension AppState {
     }
 
     func parkHiddenLayoutTerminals() {
-        let window = WorkspaceWindowRegistry.shared.liveEntries().first { $0.state === self }?.window
-        layoutTerminals.parkHidden(displayed: displayedLayoutPanes(window: window))
+        let displayed = displayedLayoutPanes(window: ownWindow)
+        layoutTerminals.parkHidden(displayed: displayed)
+        layoutTerminals.resume(displayed: displayed)
+    }
+
+    /// 창이 다시 보였다(앞으로 나옴, 가림이 걷힘, sm 보이기): 내려 둔 세션 패널을 다시 붙인다. 화면 갱신(탭·워크스페이스
+    /// 고르기)만 기다리면 얼린 화면이 그대로 남고 입력이 무대에 붙잡힌 채 어디에도 가지 않았다(11/01).
+    func resumeDisplayedLayoutTerminals() {
+        layoutTerminals.resume(displayed: displayedLayoutPanes(window: ownWindow))
+    }
+
+    private var ownWindow: NSWindow? {
+        WorkspaceWindowRegistry.shared.liveEntries().first { $0.state === self }?.window
     }
 
     func pruneLayoutTerminals(directory: LayoutDirectory = .shared) {

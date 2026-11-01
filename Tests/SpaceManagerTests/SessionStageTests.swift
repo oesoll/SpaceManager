@@ -116,7 +116,8 @@ final class SessionStageTests: XCTestCase {
         XCTAssertTrue(stage.isCovered)
         XCTAssertEqual(stage.look, .clear, "a parked pane keeps its frame without a veil")
         XCTAssertNil(session.terminalView)
-        director.begin()
+        // 창이 다시 보였다(가림이 걷힘 등) — 화면 갱신 없이도 다시 붙는다.
+        session.resumeIfParked()
         XCTAssertTrue(wait(5) { get("count") == "4" }, "showing it again did not attach")
         XCTAssertTrue(wait(6) { !stage.isCovered }, "it did not lift after attaching again")
     }

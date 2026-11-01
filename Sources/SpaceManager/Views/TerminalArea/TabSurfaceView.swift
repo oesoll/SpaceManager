@@ -167,6 +167,16 @@ private struct TabSurfaceContent: View {
         .onReceive(Timer.publish(every: 60, tolerance: 10, on: .main, in: .common).autoconnect()) { _ in
             appState.parkHiddenLayoutTerminals()
         }
+        // 창이 다시 보이면(가림이 걷힘·앞으로 나옴·sm 보이기) 내려 둔 패널을 바로 다시 붙인다.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { _ in
+            appState.resumeDisplayedLayoutTerminals()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            appState.resumeDisplayedLayoutTerminals()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
+            appState.resumeDisplayedLayoutTerminals()
+        }
         .onChange(of: layouts.layouts) { _, _ in
             appState.pruneLayoutTerminals()
             // 파일이 따라잡았으면 화면 쪽 임시 상태를 걷는다.

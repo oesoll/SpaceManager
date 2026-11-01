@@ -84,6 +84,12 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         return MainActor.assumeIsolated { stageDirectorStorage.isActive }
     }
 
+    /// 내려 둔(무대가 쉬는) 세션 패널을 다시 붙인다. 보이는 패널에만 부른다.
+    func resumeIfParked() {
+        guard let stageDirectorStorage, !stageIsActive else { return }
+        MainActor.assumeIsolated { stageDirectorStorage.begin() }
+    }
+
     /// 세션 층에 보는 창으로 잡혀 있는가(attach 표면이 있거나, 무대가 상태를 듣고 있다).
     var holdsAttach: Bool { terminalView != nil || stageIsActive }
 
@@ -525,8 +531,12 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     func focusTerminal() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if let director = self.stageDirectorStorage, self.stageIsActive {
-                MainActor.assumeIsolated { director.stage.focus() }   // 덮였으면 무대가 키를 붙잡는다
+            if let director = self.stageDirectorStorage {
+                // 포커스가 왔다 = 보이는 패널이다. 내려 둔 채였으면 다시 붙인다(키는 무대가 붙잡았다가 넘긴다).
+                MainActor.assumeIsolated {
+                    if !director.isActive { director.begin() }
+                    director.stage.focus()
+                }
                 return
             }
             self.terminalView?.focusTerminal()
