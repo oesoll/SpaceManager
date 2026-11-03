@@ -432,7 +432,11 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     // MARK: 터미널 알림 → Fine 노치
 
     /// 이 패널의 노치 항목 key. Fine이 자기 탭에 쓰는 모양(`terminal:<탭 UUID>`)과 같다.
-    var terminalNoticeKey: String { "terminal:" + id.uuidString.lowercased() }
+    /// 에이전트 패널은 에이전트 이름으로: 앱을 다시 켜도 같은 알림 하나다(UUID였을 땐 켤 때마다 새로 쌓였다).
+    var terminalNoticeKey: String {
+        if case .agent(let agentName, let host, _) = attachment { return "terminal:" + agentName + "@" + host }
+        return "terminal:" + id.uuidString.lowercased()
+    }
     private var noticeFields: [String: String]?
     private var noticeInputMonitor: Any?
 

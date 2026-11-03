@@ -22,6 +22,7 @@ final class NotchOwner: ObservableObject {
     private let directory: PeerDirectory
     private var started = false
     private var storeFeed: AnyCancellable?
+    private var agentFeed: AnyCancellable?
     private let fineFeed = DirectoryWatcher()
     private var fineStamp: Date?
     private var launchObserver: NSObjectProtocol?
@@ -76,6 +77,9 @@ final class NotchOwner: ObservableObject {
         if importing { importFromFine() }
         fineFeed.stop()
         fineFeed.onChange = nil
+        agentFeed = directory.$agents.receive(on: DispatchQueue.main).sink { [weak self] agents in
+            MainActor.assumeIsolated { self?.store.settle(with: agents) }
+        }
         storeFeed = store.$items.receive(on: DispatchQueue.main).sink { [weak self] items in
             self?.directory.applyNotch(items)
         }

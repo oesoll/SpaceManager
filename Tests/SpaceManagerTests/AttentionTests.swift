@@ -149,4 +149,58 @@ struct AttentionTests {
         #expect(throws: (any Error).self) { try store.post(args()) }
         #expect(store.items.isEmpty)
     }
+
+    // 11/02: 패널의 쉼 알림이 89개 쌓였다(키가 앱 객체 UUID, 아무도 그 칸에 안 침). 쉼 알림은 에이전트가 다시 일하거나
+    // 끝나면 걷히고, 반나절이면 사라지며, 같은 알림이 곧 다시 오면 파일을 다시 쓰지 않는다. 질문 알림은 그대로다.
+    @Test func terminalPingsClearThemselvesButQuestionsStay() throws {
+        let store = AttentionStore()
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        func ping(_ name: String, host: String = "mac") -> [String: Any] {
+            ["host": host, "source": "sm:" + name, "key": "terminal:\(name)@\(host)", "title": name,
+             "message": "Claude is waiting for your input", "state": "waiting"]
+        }
+        try store.post(ping("w1"), now: t0)
+        try store.post(ping("w2"), now: t0)
+        try store.post(ping("gone1"), now: t0)
+        try store.post(["host": "mac", "source": "sm:w1", "key": "deploy-q", "title": "배포할까요?", "state": "waiting"], now: t0)
+        // the same ping again within a minute: same item, same time (no rewrite)
+        let again = try store.post(ping("w1"), now: t0.addingTimeInterval(20))
+        #expect(again.updatedAt == t0)
+        func agent(_ name: String, _ state: PeerState, since: Date) -> PeerAgent {
+            PeerAgent(id: name + "-id", name: name, host: "mac", target: "sm:" + name, state: state, since: since)
+        }
+        store.settle(with: [agent("w1", .working, since: t0.addingTimeInterval(5)),
+                            agent("w2", .idle, since: t0.addingTimeInterval(5)),
+                            agent("gone1", .gone, since: t0.addingTimeInterval(5))], now: t0.addingTimeInterval(10))
+        let byKey = Dictionary(uniqueKeysWithValues: store.items.map { ($0.key, $0) })
+        #expect(byKey["terminal:w1@mac"]?.state == .done, "working again after the ping: no longer waiting")
+        #expect(byKey["terminal:w2@mac"]?.state == .waiting, "still idle: still waiting")
+        #expect(byKey["terminal:gone1@mac"] == nil, "an ended agent's ping goes")
+        #expect(byKey["deploy-q"]?.state == .waiting, "a question is never settled by peer state")
+        // working that started before the ping does not count
+        try store.post(ping("w3"), now: t0)
+        store.settle(with: [agent("w3", .working, since: t0.addingTimeInterval(-60))], now: t0.addingTimeInterval(10))
+        #expect(store.items.first { $0.key == "terminal:w3@mac" }?.state == .waiting)
+        // a hook's session notice from an sm agent that ended goes too
+        try store.post(["host": "mac", "source": "sm:cx1", "key": "codex:01a19707-e90e-7442-9b33-f4b441000000", "title": "tmp · codex",
+                        "state": "waiting"], now: t0)
+        store.settle(with: [agent("cx1", .gone, since: t0.addingTimeInterval(5))], now: t0.addingTimeInterval(10))
+        #expect(!store.items.contains { $0.key.hasPrefix("codex:") })
+        // half a day later the pings are gone, the question stays
+        try store.expire(now: t0.addingTimeInterval(AttentionStore.pingLifetime + 1))
+        #expect(store.items.map(\.key) == ["deploy-q"])
+    }
+
+    @Test func oldPerObjectPaneKeysAreDroppedOnceAtStart() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("attention-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let first = AttentionStore(file: file)
+        try first.post(["host": "mac", "source": "sm:w1", "key": "terminal:" + UUID().uuidString.lowercased(), "title": "w1", "state": "waiting"])
+        try first.post(["host": "mac", "source": "sm:w1", "key": "terminal:w1@mac", "title": "w1", "state": "waiting"])
+        let fineKey = "terminal:" + UUID().uuidString.lowercased()
+        try first.post(["host": "local", "source": "fine:" + UUID().uuidString, "key": fineKey, "title": "fine", "state": "waiting"])
+        let second = AttentionStore(file: file)
+        second.start()
+        #expect(Set(second.items.map(\.key)) == ["terminal:w1@mac", fineKey], "Fine's own tab keys are stable and stay")
+    }
 }

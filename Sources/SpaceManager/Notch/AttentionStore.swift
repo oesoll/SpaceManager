@@ -52,9 +52,15 @@ struct AttentionItem: Codable, Equatable, Identifiable {
     var json: [String: Any] {
         ["id": id, "key": key, "host": host, "source": source,
          "fingerprint": fingerprint, "title": title, "message": message,
-         "state": state.rawValue, "updatedAt": ISO8601DateFormatter().string(from: updatedAt),
+         "state": state.rawValue, "updatedAt": Self.timestamp.string(from: updatedAt),
          "workspace": workspace ?? ""]
     }
+    /// 목록을 내줄 때마다 항목마다 새로 만들면 attention.list 한 번에 수십 개다(11/02 프로파일).
+    nonisolated(unsafe) private static let timestamp = ISO8601DateFormatter()
+    /// A pane's own terminal notification ("Claude is waiting for your input"): a ping, not a question someone asked.
+    var isTerminalPing: Bool { key.hasPrefix("terminal:") }
+    /// The sm session it came from (`sm:NAME`), if any.
+    var smSession: String? { source.hasPrefix("sm:") ? String(source.dropFirst(3)) : nil }
     /// Hook keys name one harness conversation, which lives in exactly one terminal.
     var isSessionKey: Bool {
         key.range(of: "^[a-z][a-z0-9-]*:[0-9a-f][0-9a-f-]{7,}$", options: .regularExpression) != nil
@@ -78,6 +84,11 @@ final class AttentionStore: ObservableObject {
     static let capacity = 200
     static let workingLease: TimeInterval = 3600
     static let doneLifetime: TimeInterval = 30
+    /// 패널의 터미널 알림은 에이전트가 쉴 때마다 오는 신호라, 아무도 그 칸에 치지 않으면 영영 남았다(11/02 노치에
+    /// 89개, 최고 21일). 질문(seol-notch·sm notify)과 달리 반나절이 지나면 걷는다.
+    static let pingLifetime: TimeInterval = 12 * 3600
+    /// 같은 알림이 이 안에 다시 오면 파일을 다시 쓰지 않는다(에이전트는 쉴 때마다 같은 알림을 낸다).
+    static let repeatWindow: TimeInterval = 60
 
     init(file: URL? = nil) {
         self.file = file
@@ -133,6 +144,10 @@ final class AttentionStore: ObservableObject {
             item.isSessionKey && other.host == item.host && other.key == item.key && other.id != identity
         }
         let old = items.first { $0.id == identity } ?? items.first(where: moved)
+        if let old, old.id == identity, old.state == state, old.message == message, old.title == title,
+           old.workspace == item.workspace, now.timeIntervalSince(old.updatedAt) < Self.repeatWindow {
+            return old
+        }
         var next = items.filter { $0.id != identity && !moved($0) }
         guard next.count < Self.capacity else { throw AttentionError("notification queue is full; dismiss an existing item") }
         next.append(item)
@@ -154,6 +169,7 @@ final class AttentionStore: ObservableObject {
             var item = original
             let age = now.timeIntervalSince(item.updatedAt)
             if item.state == .done && age >= Self.doneLifetime { return nil }
+            if item.isTerminalPing && age >= Self.pingLifetime { return nil }
             if item.state == .working && age >= Self.workingLease { item.state = .unknown }
             return item
         }
@@ -161,7 +177,38 @@ final class AttentionStore: ObservableObject {
         scheduleExpiry(now: now)
     }
 
-    func start() { do { try expire() } catch { NSLog("sm attention expiry failed: %@", String(describing: error)) } }
+    func start() {
+        // 11/02까지 sm 패널의 알림 키는 앱 안 객체의 UUID라, 앱을 다시 켤 때마다 같은 에이전트의 알림이 새로 쌓이고
+        // 옛것은 아무도 내리지 못했다. 지금 키는 terminal:NAME@HOST다 — 옛 꼴은 한 번 걷는다.
+        let orphan = "^terminal:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        let kept = items.filter { !($0.smSession != nil && $0.key.range(of: orphan, options: .regularExpression) != nil) }
+        do {
+            if kept != items { try commit(kept) }
+            try expire()
+        } catch { NSLog("sm attention expiry failed: %@", String(describing: error)) }
+    }
+
+    /// 에이전트가 다시 일하거나 끝났으면, 그 패널의 쉼 알림(터미널 알림, 훅의 세션 알림)은 더 기다리는 게 아니다. peer가 알려 주는 상태만 믿는다
+    /// (조용함을 끝남으로 읽지 않는다): 알림 뒤에 working이 됐거나, gone이다. 질문 알림은 건드리지 않는다.
+    func settle(with agents: [PeerAgent], now: Date = Date()) {
+        var changed = false
+        let next = items.compactMap { original -> AttentionItem? in
+            guard original.isTerminalPing || original.isSessionKey, original.state.needsAttention, let name = original.smSession,
+                  let agent = agents.first(where: { $0.name == name && $0.host == original.host && !$0.isStale }) else { return original }
+            if agent.state == .gone { changed = true; return nil }
+            if agent.state == .working && agent.since > original.updatedAt {
+                var item = original
+                item.state = .done
+                item.message = "이어서 진행하고 있어요."
+                item.updatedAt = now
+                changed = true
+                return item
+            }
+            return original
+        }
+        guard changed else { return }
+        do { try commit(next); scheduleExpiry(now: now) } catch { NSLog("sm attention settle failed: %@", String(describing: error)) }
+    }
 
     private func commit(_ next: [AttentionItem]) throws {
         if let file {
@@ -179,7 +226,7 @@ final class AttentionStore: ObservableObject {
             switch item.state {
             case .working: return item.updatedAt.addingTimeInterval(Self.workingLease)
             case .done: return item.updatedAt.addingTimeInterval(Self.doneLifetime)
-            default: return nil
+            default: return item.isTerminalPing ? item.updatedAt.addingTimeInterval(Self.pingLifetime) : nil
             }
         }.min()
         guard let deadline else { return }
