@@ -171,4 +171,59 @@ final class SessionStageTests: XCTestCase {
         XCTAssertTrue(wait(8) { !director.stage.isCovered && director.stage.live != nil },
                       "the layer came back but the pane never attached")
     }
+
+    /// 끝남 알림이 오지 않은 채 attach가 죽었다(11/04 flat ops-lead, 가려진 탭): 다음 상태 줄(하트비트)에서 알아채고
+    /// 다시 붙는다. 전에는 stage.live가 죽은 표면을 쥔 채라 ready가 와도 아무도 다시 붙지 않았다.
+    func testADeadAttachWhoseExitWasNeverReportedComesBackOnTheNextHeartbeat() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["SM_CAPTURE"] == "1", "set SM_CAPTURE=1")
+        let realHome = URL(fileURLWithPath: String(cString: getpwuid(getuid())!.pointee.pw_dir))
+        try XCTSkipIf(URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL == realHome.standardizedFileURL,
+                      "run through scripts/test-isolated.sh")
+        let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".smux/bin").path
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { for name in ["sm-session", "count"] { try? FileManager.default.removeItem(atPath: dir + "/" + name) } }
+        try """
+        #!/bin/sh
+        dir=$(dirname "$0")
+        case "$1" in
+        state) while true; do printf '{"name":"qa","state":"ready","at":0}\\n'; sleep 1; done ;;
+        screen) printf 'LAST\\r\\n' ;;
+        attach) n=$(cat "$dir/count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$dir/count"; printf 'attached %s\\n' "$n"; exec cat ;;
+        esac
+        """.write(toFile: dir + "/sm-session", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir + "/sm-session")
+        func count() -> String {
+            ((try? String(contentsOfFile: dir + "/count", encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        func wait(_ timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if condition() { return true }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            }
+            return condition()
+        }
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        let session = TerminalSession(kind: .shell, name: "qa", workingDirectory: NSHomeDirectory(),
+                                      attachment: .agent(name: "qa", host: "mac", agent: nil))
+        let director = try XCTUnwrap(session.stageDirector)
+        director.sessionLayer = dir + "/sm-session"
+        let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 480, height: 160), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = TerminalHostView(frame: NSRect(x: 0, y: 0, width: 480, height: 160))
+        window.contentView = host
+        window.orderFrontRegardless()
+        host.showStage(director.stage)
+        defer { session.cleanup(force: true); window.close() }
+
+        director.begin()
+        XCTAssertTrue(wait(6) { count() == "1" && director.stage.live != nil })
+        let live = try XCTUnwrap(director.stage.live)
+        live.onExit = nil                      // the exit report never arrives
+        let pid = try XCTUnwrap(live.foregroundProcessIdentifier)
+        kill(pid, SIGKILL)
+        XCTAssertTrue(wait(10) { count() == "2" }, "the dead attach was never noticed")
+    }
 }

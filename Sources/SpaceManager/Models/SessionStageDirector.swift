@@ -94,6 +94,7 @@ final class SessionStageDirector {
 
     func apply(_ next: String) {
         guard isActive else { return }
+        reviveIfDead()
         let previous = state
         state = next
         switch next {
@@ -172,6 +173,15 @@ final class SessionStageDirector {
         let delay = min(30, 3 * pow(2, Double(min(4, reconnectAttempt))))
         reconnectAttempt += 1
         scheduleReconnect(after: delay)
+    }
+
+    /// 붙어 있다고 여긴 표면의 attach가 실은 끝났다: 끝남 알림이 오지 않았거나(가려진 탭에서), 일부러 내린 것으로
+    /// 적힌 채 남았다. 그러면 `stage.live`가 비지 않아 상태가 ready여도 다시 붙지 않고, 패널이 끊긴 채 멈췄다
+    /// (11/04 flat ops-lead). 상태 줄(변할 때, 그리고 20초마다 오는 하트비트)마다 libghostty에 직접 묻는다.
+    private func reviveIfDead() {
+        guard let live = stage.live, live.processHasExited else { return }
+        endedOnPurpose.remove(ObjectIdentifier(live))
+        surfaceExited(live)
     }
 
     /// 재연결 배지를 눌렀다: 기다리지 않고 지금.
