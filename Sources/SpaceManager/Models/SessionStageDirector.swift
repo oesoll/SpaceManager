@@ -34,7 +34,9 @@ final class SessionStageDirector {
     private var reconnect: DispatchWorkItem?
     private var reconnectAttempt = 0
     /// 일부러 내린 attach(멈춤·가려짐) — 그 끝남은 끊김이 아니다.
-    private var endedOnPurpose = Set<ObjectIdentifier>()
+    /// 일부러 끝낸 표면. 약한 참조다 — 주소(ObjectIdentifier)로 들고 있으면 끝남이 끝내 오지 않은 표면의 주소를
+    /// 새 표면이 물려받아, 진짜 끊김이 '일부러 끝냄'으로 보여 다시 붙지 않았다(11/04 flat ops-lead, sm-ghostty 진단).
+    private let endedOnPurpose = NSHashTable<GhosttyTerminalView>.weakObjects()
     /// 얼린 화면 아래에서 다시 붙는 동안, 오래 걸리면 "연결 중" 모습으로 바꾸는 예약.
     private var connectingLook: DispatchWorkItem?
     /// 빠르게 다시 붙으면(대부분) 막도 빛도 없이 얼린 화면이 그대로 걷힌다. 이보다 오래 걸릴 때만 "연결 중"을 보인다
@@ -161,7 +163,7 @@ final class SessionStageDirector {
 
     /// 표면의 자식(attach)이 끝났다.
     func surfaceExited(_ view: GhosttyTerminalView) {
-        if endedOnPurpose.remove(ObjectIdentifier(view)) != nil { return }
+        if endedOnPurpose.contains(view) { endedOnPurpose.remove(view); return }
         guard isActive, view === stage.live else { return }
         // 밖에서 끊겼다(ssh — 맥이 잠들었거나 연결이 오래 조용했다, 강제 종료). 마지막 화면을 얼리고 깨울 때와
         // 같은 "연결 중" 모습으로 둔 채 다시 붙는다(SEOL 11/01). 세션 층의 attach는 세션이 멈추거나 잠들어도
@@ -180,7 +182,7 @@ final class SessionStageDirector {
     /// (11/04 flat ops-lead). 상태 줄(변할 때, 그리고 20초마다 오는 하트비트)마다 libghostty에 직접 묻는다.
     private func reviveIfDead() {
         guard let live = stage.live, live.processHasExited else { return }
-        endedOnPurpose.remove(ObjectIdentifier(live))
+        endedOnPurpose.remove(live)
         surfaceExited(live)
     }
 
@@ -206,7 +208,7 @@ final class SessionStageDirector {
     }
 
     private func endOnPurpose(_ view: GhosttyTerminalView) {
-        endedOnPurpose.insert(ObjectIdentifier(view))
+        endedOnPurpose.add(view)
         view.endProcess()
     }
 

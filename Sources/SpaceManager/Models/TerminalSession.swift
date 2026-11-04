@@ -366,8 +366,9 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
 
     private func surfaceExited(_ view: GhosttyTerminalView, code reported: Int32, connectedFor: TimeInterval) {
         let code = recordedExit(or: reported)
-        if let stageDirectorStorage, stageIsActive {
-            // 무대가 맡은 패널: 일부러 내린 것인지, 끊겨서 다시 붙어야 하는지는 무대가 안다.
+        if let stageDirectorStorage {
+            // 무대가 맡은 패널: 일부러 내린 것인지, 끊겨서 다시 붙어야 하는지는 무대가 안다. 무대가 쉬는 중(내림)이어도
+            // 넘긴다 — 그래야 일부러 끝낸 표면의 기록이 지워진다.
             MainActor.assumeIsolated { stageDirectorStorage.surfaceExited(view) }
             return
         }
