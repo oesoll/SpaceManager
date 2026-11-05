@@ -226,4 +226,66 @@ final class SessionStageTests: XCTestCase {
         kill(pid, SIGKILL)
         XCTAssertTrue(wait(10) { count() == "2" }, "the dead attach was never noticed")
     }
+
+    /// 재생된 출력 속 옛 터미널 질의(DA·DSR·OSC 11)에 새 터미널이 답하면 그 답이 attach의 입력(= 에이전트 입력)으로
+    /// 간다(11/05 SEOL "다시 연결할 때 오류 코드 같은 게"). 실제 libghostty가 그렇게 하는지 잰다 — 고치기 전 기준선.
+    func testReplayedTerminalQueriesAreAnsweredIntoTheAgentsInput() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["SM_CAPTURE"] == "1", "set SM_CAPTURE=1")
+        let realHome = URL(fileURLWithPath: String(cString: getpwuid(getuid())!.pointee.pw_dir))
+        try XCTSkipIf(URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL == realHome.standardizedFileURL,
+                      "run through scripts/test-isolated.sh")
+        let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".smux/bin").path
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { for name in ["sm-session", "input"] { try? FileManager.default.removeItem(atPath: dir + "/" + name) } }
+        // attach "replays" a screen with the queries an agent once sent, then records whatever comes back as input.
+        try """
+        #!/bin/sh
+        dir=$(dirname "$0")
+        case "$1" in
+        state) while true; do printf '{"name":"qa","state":"ready","at":0}\\n'; sleep 1; done ;;
+        screen) printf 'LAST\\r\\n' ;;
+        attach) stty raw -echo 2>/dev/null; if [ -n "$SM_REPLAY_FILE" ]; then cat "$SM_REPLAY_FILE"; else printf 'old output\\r\\n\\033[c\\033[6n\\033]11;?\\007more output\\r\\n'; fi; exec cat > "$dir/input" ;;
+        esac
+        """.write(toFile: dir + "/sm-session", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir + "/sm-session")
+        func wait(_ timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if condition() { return true }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            }
+            return condition()
+        }
+        func input() -> String { (try? String(contentsOfFile: dir + "/input", encoding: .utf8)) ?? "" }
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        let session = TerminalSession(kind: .shell, name: "qa", workingDirectory: NSHomeDirectory(),
+                                      attachment: .agent(name: "qa", host: "mac", agent: nil))
+        let director = try XCTUnwrap(session.stageDirector)
+        director.sessionLayer = dir + "/sm-session"
+        let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 480, height: 160), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = TerminalHostView(frame: NSRect(x: 0, y: 0, width: 480, height: 160))
+        window.contentView = host
+        window.orderFrontRegardless()
+        host.showStage(director.stage)
+        defer { session.cleanup(force: true); window.close() }
+        director.begin()
+        // SM_REPLAY_FILE: what a holder actually sends on reattach. A current-screen holder sends no old queries, so
+        // nothing may come back as input, and the screen must show its content.
+        if let replay = ProcessInfo.processInfo.environment["SM_REPLAY_FILE"], !replay.isEmpty {
+            XCTAssertTrue(wait(6) { (director.stage.live?.readText(lastLines: 40) ?? "").contains(ProcessInfo.processInfo.environment["SM_REPLAY_EXPECT"] ?? "CURRENT SCREEN") },
+                          "the replayed screen did not show")
+            RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+            print("REPLAY-SCREEN:", (director.stage.live?.readText(lastLines: 5) ?? "").replacingOccurrences(of: "\n", with: "⏎"))
+            XCTAssertEqual(input(), "", "the reattach output made the terminal answer into the agent's input")
+            return
+        }
+        _ = wait(6) { input().contains("R") && input().contains("c") }
+        let got = input()
+        print("REPLAY-QUERY-ANSWERS:", got.unicodeScalars.map { $0.value < 32 || $0.value == 127 ? String(format: "\\x%02x", $0.value) : String($0) }.joined())
+        XCTAssertTrue(got.contains("\u{1b}[?"), "DA was not answered into the input")
+        XCTAssertTrue(got.contains("R"), "DSR was not answered into the input")
+    }
 }
