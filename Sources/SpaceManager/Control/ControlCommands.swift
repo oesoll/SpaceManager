@@ -236,7 +236,10 @@ enum ControlCommands {
     }
 
     /// sm 패널에서 세션을 연다. 어디 있는지는 세션 층이 안다(원격도, 이름의 대소문자도 맞춰 준다).
-    private static func revealInSM(_ target: String, completion: @escaping (ControlResponse) -> Void) {
+    /// `focus`: also bring sm to the front and take the keyboard. Off when an agent asks (`sm show` from an agent's
+    /// shell): the pane comes forward inside its window, but SEOL's current app and typing stay (11/06 SEOL "화면
+    /// 포커스를 가로채는게 별로야"). A notch click and SEOL's own `sm show` keep it on.
+    private static func revealInSM(_ target: String, focus wantsFocus: Bool = true, completion: @escaping (ControlResponse) -> Void) {
         SessionLayer.run(["where", target, "--json"]) { result in
             switch result {
             case .failure(let failure):
@@ -260,7 +263,7 @@ enum ControlCommands {
                 guard let (entry, workspace) = chosen else {
                     completion(.error("no sm window has workspace \(key) — add it with sm ws add")); return
                 }
-                focus(entry)
+                if wantsFocus { focus(entry) }
                 entry.state.reveal(session: name, in: workspace, layoutKey: key, pane: found["pane"] as? String) { outcome in
                     switch outcome {
                     case .failure(let failure): completion(.error(failure.message))
@@ -328,9 +331,10 @@ enum ControlCommands {
             guard let target = r.string("target"), !target.isEmpty else { throw fail("usage: sm reveal NAME[@HOST]") }
             // 그 세션을 Fine 탭이 보고 있으면(Fine으로 옮긴 세션, Fine이 띄운 세션) 그 탭을 앞으로 — 세션은 하나라도
             // 보는 앱은 그때그때 하나다. 아니면 sm 패널.
+            let wantsFocus = r.bool("focus") ?? true
             FineControl.tab(showing: target, localHost: PeerDirectory.shared.localHostName) { tab in
                 if let tab {
-                    FineControl.request("tab.select", ["tab": tab]) { reply in
+                    FineControl.request("tab.select", ["tab": tab, "focus": wantsFocus]) { reply in
                         switch reply {
                         case .ok: completion(.ok(["name": target, "fineTab": tab]))
                         case .failed(let message): completion(.error(message))
@@ -338,7 +342,7 @@ enum ControlCommands {
                         }
                     }
                 } else {
-                    revealInSM(target, completion: completion)
+                    revealInSM(target, focus: wantsFocus, completion: completion)
                 }
             }
             return true

@@ -535,6 +535,9 @@ do {
         command = "session.reveal"
         guard let target = sub else { throw CLIError(message: "usage: sm show NAME[@HOST]") }
         args["target"] = target
+        // An agent's call brings the pane forward inside sm but does not pull SEOL out of the app being used
+        // (11/06). SEOL's own terminal (no PEER_NAME) still switches to it.
+        if ProcessInfo.processInfo.environment["PEER_NAME"] != nil { args["focus"] = false }
     case ("perf", "keys"):
         command = "perf.keys"
         args["session"] = try need(1, "sm perf keys NAME [-n COUNT]  (NAME must start with sm-bench-)")[0]
@@ -572,7 +575,8 @@ do {
     } catch let error as CLIError where command == "session.reveal" {
         // "그거 내 화면에 띄워"의 그거가 세션이 아니라 워크스페이스일 수 있다(사이드바 이름·--ws 값).
         guard let target = args["target"] as? String,
-              let shown = try? send("ws.select", ["ws": target.split(separator: "@").first.map(String.init) ?? target]) else {
+              let shown = try? send("ws.select", ["ws": target.split(separator: "@").first.map(String.init) ?? target,
+                                                  "focus": args["focus"] as? Bool ?? true]) else {
             throw CLIError(message: error.message.replacingOccurrences(of: "sm: ", with: "") + "\n  세션도 사이드바 워크스페이스도 아니다 — sm ls(세션), sm ws(워크스페이스)")
         }
         response = shown; command = "ws.select"

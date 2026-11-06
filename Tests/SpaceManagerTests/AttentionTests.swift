@@ -84,9 +84,9 @@ struct AttentionTests {
 
     @Test func groupsByWorkspaceWithFineAndHostFallbacks() throws {
         let store = AttentionStore()
-        var habit = args("working", key: "codex:01a11fee-2748-7a01-0000-000000000001", host: "arch")
+        var habit = args("working", key: "habit-build", host: "arch")
         habit["workspace"] = "Habitrend"
-        var habitQuestion = args("waiting", key: "claude:bb8f8469-85c8-45d8-0000-000000000002", host: "arch")
+        var habitQuestion = args("waiting", key: "habit-question", host: "arch")
         habitQuestion["workspace"] = "Habitrend"; habitQuestion["source"] = "%9"
         var fineTab = args("working", key: "claude:fb1d30e0-49e5-4446-0000-000000000003")
         fineTab["source"] = "fine:bc1e3acd-2449-4f29-991c-e8212880927e"
@@ -189,6 +189,9 @@ struct AttentionTests {
         // half a day later the pings are gone, the question stays
         try store.expire(now: t0.addingTimeInterval(AttentionStore.pingLifetime + 1))
         #expect(store.items.map(\.key) == ["deploy-q"])
+        // a question nobody answered in 3 days leaves too (its original stays in the decision box)
+        try store.expire(now: t0.addingTimeInterval(AttentionStore.questionLifetime + 1))
+        #expect(store.items.isEmpty)
     }
 
     @Test func oldPerObjectPaneKeysAreDroppedOnceAtStart() throws {
@@ -202,5 +205,29 @@ struct AttentionTests {
         let second = AttentionStore(file: file)
         second.start()
         #expect(Set(second.items.map(\.key)) == ["terminal:w1@mac", fineKey], "Fine's own tab keys are stable and stay")
+    }
+
+    // 11/06 SEOL "쓰잘데기없는거만 호출": an agent going idle does not pop the notch or count; a question does.
+    @Test func idlePingsStayOffTheNotchButQuestionsPopIt() throws {
+        let store = AttentionStore()
+        var pops = 0
+        store.onAttention = { pops += 1 }
+        try store.post(["host": "mac", "source": "sm:w1", "key": "terminal:w1@mac", "title": "w1", "state": "waiting",
+                        "message": "Claude is waiting for your input"])
+        try store.post(["host": "mac", "source": "sm:w2", "key": "claude:792bce8a-e8ef-4067-a050-6b6cb0000000", "title": "w2",
+                        "state": "waiting"])
+        #expect(pops == 0)
+        #expect(store.waitingCount == 0)
+        #expect(store.ordered.isEmpty)
+        #expect(store.items.count == 2, "pings are kept for the pane titles")
+        // a Fine tab is SEOL's own conversation: its idle notice is SEOL's turn and still notifies
+        try store.post(["host": "local", "source": "fine:bc1e3acd-2449-4f29-991c-e8212880927e",
+                        "key": "terminal:bc1e3acd-2449-4f29-991c-e8212880927e", "title": "Claude Code", "state": "waiting"])
+        #expect(pops == 1)
+        pops = 0
+        try store.post(["host": "mac", "source": "sm:w1", "key": "seol-notch:3fa9c1d2e4b5a6f7", "title": "배포할까요?", "state": "waiting"])
+        #expect(pops == 1)
+        #expect(store.waitingCount == 2)
+        #expect(store.ordered.map(\.title).sorted() == ["Claude Code", "배포할까요?"])
     }
 }

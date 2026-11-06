@@ -297,7 +297,7 @@ final class AttentionNotch: ObservableObject {
         } + CGFloat(max(0, groups.count - 1)) * Metrics.groupGap + Metrics.listBottom
     }
     var detailHeight: CGFloat {
-        housingHeight + (store.items.isEmpty ? 44 : min(listHeight, Metrics.maxList))
+        housingHeight + (store.shown.isEmpty ? 44 : min(listHeight, Metrics.maxList))
             + (errorMessage == nil ? 0 : 40)
     }
     var peekHeight: CGFloat {
@@ -368,7 +368,7 @@ final class AttentionNotch: ObservableObject {
         openedByHover = false
         errorMessage = nil
         if automatic && !detail {
-            previewID = store.items.filter { $0.state.needsAttention }.max { $0.updatedAt < $1.updatedAt }?.id
+            previewID = store.shown.filter { $0.state.needsAttention }.max { $0.updatedAt < $1.updatedAt }?.id
         }
         mode = automatic && !detail ? .peek : .details
         contentMode = mode
@@ -395,7 +395,7 @@ final class AttentionNotch: ObservableObject {
         do {
             try store.dismiss(id: item.id)
             if previewID == item.id { previewID = nil }
-            if store.items.isEmpty { hide() }
+            if store.shown.isEmpty { hide() }
         } catch { errorMessage = "알림을 지우지 못했습니다." }
     }
 
@@ -525,7 +525,7 @@ final class AttentionNotch: ObservableObject {
             "badgeVisible": badge?.isVisible ?? false, "panelVisible": panel?.isVisible ?? false,
             "presentation": surface?.presentation ?? [:],
             "hoverRegion": hoverRegion, "openedByHover": openedByHover,
-            "leadingID": displayItems.first?.id ?? "", "itemCount": store.items.count]
+            "leadingID": displayItems.first?.id ?? "", "itemCount": store.shown.count]
         if let geometry {
             result["display"] = ["hasNotch": geometry.housing != nil, "width": geometry.housing?.width ?? 0,
                                  "height": geometry.housing?.height ?? 0, "centerX": geometry.centerX,
@@ -615,7 +615,7 @@ private struct AttentionNotchView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            if store.items.isEmpty {
+            if store.shown.isEmpty {
                 Text("조용합니다. 기다리는 에이전트가 없어요.")
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.45))
                     .frame(maxWidth: .infinity, alignment: .center).frame(height: 36)

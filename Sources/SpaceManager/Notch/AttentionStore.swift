@@ -58,7 +58,17 @@ struct AttentionItem: Codable, Equatable, Identifiable {
     /// 목록을 내줄 때마다 항목마다 새로 만들면 attention.list 한 번에 수십 개다(11/02 프로파일).
     nonisolated(unsafe) private static let timestamp = ISO8601DateFormatter()
     /// A pane's own terminal notification ("Claude is waiting for your input"): a ping, not a question someone asked.
-    var isTerminalPing: Bool { key.hasPrefix("terminal:") }
+    var isTerminalPing: Bool {
+        key.hasPrefix("terminal:") || key.range(of: "^(claude|codex):[0-9a-f][0-9a-f-]{7,}$", options: .regularExpression) != nil
+    }
+    /// An agent going idle — the pane's terminal notice or a hook's end-of-turn notice — rather than someone asking
+    /// SEOL something. Agents talk to each other through peer, so most idle moments need nobody; the pane title
+    /// still shows them ("알림"), but the notch pops only for questions (seol-notch, sm notify) and errors (11/06 SEOL
+    /// "쓰잘데기없는거만 호출").
+    /// A Fine tab is a conversation SEOL is having, so its "waiting" does mean SEOL's turn — those still notify.
+    var isPing: Bool {
+        !source.hasPrefix("fine:") && isTerminalPing
+    }
     /// The sm session it came from (`sm:NAME`), if any.
     var smSession: String? { source.hasPrefix("sm:") ? String(source.dropFirst(3)) : nil }
     /// Hook keys name one harness conversation, which lives in exactly one terminal.
@@ -87,6 +97,9 @@ final class AttentionStore: ObservableObject {
     /// 패널의 터미널 알림은 에이전트가 쉴 때마다 오는 신호라, 아무도 그 칸에 치지 않으면 영영 남았다(11/02 노치에
     /// 89개, 최고 21일). 질문(seol-notch·sm notify)과 달리 반나절이 지나면 걷는다.
     static let pingLifetime: TimeInterval = 12 * 3600
+    /// A question nobody answered in 3 days is not going to be (11/06: Dori decision cards up to 3 weeks old, seol-notch
+    /// questions from long-ended sessions). The decision box (harness-inbox) keeps the originals.
+    static let questionLifetime: TimeInterval = 3 * 86400
     /// 같은 알림이 이 안에 다시 오면 파일을 다시 쓰지 않는다(에이전트는 쉴 때마다 같은 알림을 낸다).
     static let repeatWindow: TimeInterval = 60
 
@@ -98,14 +111,17 @@ final class AttentionStore: ObservableObject {
         }
     }
 
+    /// What the notch shows: everything but idle pings (those stay for the pane titles, PeerDirectory.notices).
+    var shown: [AttentionItem] { items.filter { !$0.isPing } }
+
     var ordered: [AttentionItem] {
-        items.sorted { a, b in
+        shown.sorted { a, b in
             if a.state.priority != b.state.priority { return a.state.priority > b.state.priority }
             return a.updatedAt > b.updatedAt
         }
     }
-    var waitingCount: Int { items.filter { $0.state.needsAttention }.count }
-    var workingCount: Int { items.filter { $0.state == .working }.count }
+    var waitingCount: Int { shown.filter { $0.state.needsAttention }.count }
+    var workingCount: Int { shown.filter { $0.state == .working }.count }
 
     @discardableResult
     func post(_ args: [String: Any], now: Date = Date()) throws -> AttentionItem {
@@ -153,7 +169,7 @@ final class AttentionStore: ObservableObject {
         next.append(item)
         try commit(next)
         let changed = old?.state != state || old?.message != message || old?.title != title
-        if state.needsAttention && changed { onAttention?() }
+        if state.needsAttention && changed && !item.isPing { onAttention?() }
         scheduleExpiry(now: now)
         return item
     }
@@ -170,6 +186,7 @@ final class AttentionStore: ObservableObject {
             let age = now.timeIntervalSince(item.updatedAt)
             if item.state == .done && age >= Self.doneLifetime { return nil }
             if item.isTerminalPing && age >= Self.pingLifetime { return nil }
+            if item.state.needsAttention && age >= Self.questionLifetime { return nil }
             if item.state == .working && age >= Self.workingLease { item.state = .unknown }
             return item
         }
@@ -226,7 +243,9 @@ final class AttentionStore: ObservableObject {
             switch item.state {
             case .working: return item.updatedAt.addingTimeInterval(Self.workingLease)
             case .done: return item.updatedAt.addingTimeInterval(Self.doneLifetime)
-            default: return item.isTerminalPing ? item.updatedAt.addingTimeInterval(Self.pingLifetime) : nil
+            default:
+                if item.isTerminalPing { return item.updatedAt.addingTimeInterval(Self.pingLifetime) }
+                return item.state.needsAttention ? item.updatedAt.addingTimeInterval(Self.questionLifetime) : nil
             }
         }.min()
         guard let deadline else { return }
