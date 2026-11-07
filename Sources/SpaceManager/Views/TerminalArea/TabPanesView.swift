@@ -434,7 +434,7 @@ struct LayoutTabView: View {
     /// 아직 tmux에 남은 에이전트를 sm 세션으로 옮기는 버튼. 쉬는 중일 때만 켠다 — 일하는 중에 옮기면
     /// 그 턴이 끊긴다. 하네스 lane(dori-*)은 등록부 주소를 하네스가 먼저 바꿔야 해서 하네스가 옮긴다.
     private func migrateAction(for id: String, session: TerminalSession) -> LegendAction? {
-        guard isInTmux(id), let name = layout.panes[id]?.session else { return nil }
+        guard isInTmux(id), let (name, host) = layout.agent(inPane: id) else { return nil }
         if name.hasPrefix("dori-") {
             return LegendAction(title: "하네스가 옮김", isEnabled: false,
                                 help: "하네스가 등록부 주소를 바꾼 뒤 옮긴다", run: {})
@@ -442,13 +442,13 @@ struct LayoutTabView: View {
         let idle = agent(for: id).map { $0.state == .idle } ?? false
         return LegendAction(title: "sm으로 옮기기", isEnabled: idle,
                             help: idle ? "같은 대화를 sm 세션으로 옮긴다" : "쉬는 상태가 되면 옮길 수 있다",
-                            run: { appState.migrateToSessionLayer(name, host: layout.host) })
+                            run: { appState.migrateToSessionLayer(name, host: host) })
     }
 
     /// 이 패널의 에이전트 — 배치가 말하는 세션 이름(이름이 곧 세션이자 peer 이름)으로 찾는다.
     private func agent(for id: String) -> PeerAgent? {
-        guard let name = layout.panes[id]?.session else { return nil }
-        return directory.agents.first { $0.name == name && $0.host == layout.host }
+        guard let (name, host) = layout.agent(inPane: id) else { return nil }
+        return directory.agents.first { $0.name == name && $0.host == host }
     }
 
     private func badge(for id: String, session: TerminalSession) -> PaneBadge {

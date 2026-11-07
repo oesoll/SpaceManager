@@ -50,6 +50,20 @@ struct WorkspaceLayout: Decodable, Equatable {
             shell = try c.decodeIfPresent(Bool.self, forKey: .shell) ?? (session == nil)
             tmuxPane = try c.decodeIfPresent(String.self, forKey: .tmuxPane)
         }
+
+        /// 이 패널이 보이는 세션의 이름과 기기. 보통 배치가 있는 기기의 세션이고, `sm split --attach NAME@HOST`로
+        /// 넣은 패널은 그 기기의 세션이다(맥 워크스페이스에 아치 에이전트). 이름에 기기를 붙인 채 쓰면 주소가
+        /// `NAME@HOST@mac`이 되어 세션 층이 "없는 세션"이라 답하고 칸이 검게 남는다(11/07).
+        func agent(layoutHost: String) -> (name: String, host: String)? {
+            guard let session else { return nil }
+            guard let at = session.lastIndex(of: "@") else { return (session, layoutHost) }
+            return (String(session[..<at]), String(session[session.index(after: at)...]))
+        }
+    }
+
+    /// 이 패널이 보이는 세션의 이름과 기기(`Pane.agent`).
+    func agent(inPane pane: String) -> (name: String, host: String)? {
+        panes[pane]?.agent(layoutHost: host)
     }
 
     var currentTab: Tab? {

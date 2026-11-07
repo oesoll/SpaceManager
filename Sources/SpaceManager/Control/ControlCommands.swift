@@ -249,10 +249,18 @@ enum ControlCommands {
                       let name = found["name"] as? String, let host = found["host"] as? String else {
                     completion(.error("sm-session where: unexpected answer")); return
                 }
-                guard let layoutWorkspace = found["workspace"] as? String else {
+                // 세션 층은 자기 기기의 배치만 안다. 다른 기기 워크스페이스에 `NAME@HOST`로 넣은 칸은 앱이 아는 배치에서 찾는다.
+                let elsewhere = LayoutDirectory.shared.layouts.values.lazy.compactMap { layout in
+                    layout.panes.keys.first { pane in
+                        guard let agent = layout.agent(inPane: pane) else { return false }
+                        return agent.name == name && agent.host == host
+                    }.map { (layout: layout, pane: $0) }
+                }.first
+                guard let layoutWorkspace = (found["workspace"] as? String) ?? elsewhere?.layout.workspace else {
                     completion(.error("\(name)@\(host) is not in any workspace")); return
                 }
-                let key = LayoutDirectory.key(workspace: layoutWorkspace, host: host)
+                let onOwner = found["workspace"] is String
+                let key = LayoutDirectory.key(workspace: layoutWorkspace, host: onOwner ? host : elsewhere?.layout.host ?? host)
                 // 그 워크스페이스를 이미 보여 주는 창 → 앞에 있는 창 → 그 워크스페이스를 가진 아무 창.
                 let windows = liveWindows().filter { $0.state.windowKind == .workspace }
                 let holding = windows.compactMap { entry in
@@ -264,7 +272,8 @@ enum ControlCommands {
                     completion(.error("no sm window has workspace \(key) — add it with sm ws add")); return
                 }
                 if wantsFocus { focus(entry) }
-                entry.state.reveal(session: name, in: workspace, layoutKey: key, pane: found["pane"] as? String) { outcome in
+                entry.state.reveal(session: name, in: workspace, layoutKey: key,
+                                   pane: found["pane"] as? String ?? (onOwner ? nil : elsewhere?.pane)) { outcome in
                     switch outcome {
                     case .failure(let failure): completion(.error(failure.message))
                     case .success(let place):

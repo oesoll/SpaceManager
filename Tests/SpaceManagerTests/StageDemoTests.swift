@@ -13,6 +13,9 @@ final class StageDemoTests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         guard env["SM_CAPTURE"] == "1", let screen = env["SM_STAGE_DEMO"], let out = env["SM_STAGE_DEMO_OUT"],
               let recorder = env["SM_WINREC"] else { throw XCTSkip("demo only") }
+        let realHome = URL(fileURLWithPath: String(cString: getpwuid(getuid())!.pointee.pw_dir))
+        try XCTSkipIf(URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL == realHome.standardizedFileURL,
+                      "run through scripts/test-isolated.sh")
         let bin = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".smux/bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let dir = bin.path

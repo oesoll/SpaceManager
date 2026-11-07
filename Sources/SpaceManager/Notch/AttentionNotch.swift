@@ -250,7 +250,10 @@ final class AttentionNotch: ObservableObject {
         let name = String(item.source.dropFirst(3))
         let host = item.host == "local" ? PeerDirectory.shared.localHostName : item.host
         guard let layout = LayoutDirectory.shared.layouts.values.first(where: { layout in
-            layout.host == host && layout.panes.values.contains { $0.session?.caseInsensitiveCompare(name) == .orderedSame }
+            layout.panes.values.contains { pane in
+                guard let agent = pane.agent(layoutHost: layout.host) else { return false }
+                return agent.host == host && agent.name.caseInsensitiveCompare(name) == .orderedSame
+            }
         }) else { return item.group }
         let key = LayoutDirectory.key(workspace: layout.workspace, host: layout.host)
         for entry in WorkspaceWindowRegistry.shared.liveEntries() {

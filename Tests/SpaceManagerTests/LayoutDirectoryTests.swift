@@ -8,6 +8,10 @@ final class LayoutDirectoryTests: XCTestCase {
 
     /// 원격 배치: watch가 낸 배치 줄을 받고 heartbeat 줄은 건너뛴다. watch가 끝나면 다시 띄워 새 version을 받는다.
     func testRemoteWatchIsFollowedAndRestarted() throws {
+        // 격리 없이 돌면 진짜 세션 층을 가짜로 덮어썼다가 지운다. 그동안 그 기기의 sm이 전부 멎는다(11/01, 11/07).
+        let realHome = URL(fileURLWithPath: String(cString: getpwuid(getuid())!.pointee.pw_dir))
+        try XCTSkipIf(URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL == realHome.standardizedFileURL,
+                      "run through scripts/test-isolated.sh")
         let bin = URL(fileURLWithPath: NSHomeDirectory() + "/.smux/bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let counter = FileManager.default.temporaryDirectory.appendingPathComponent("watch-count-\(UUID().uuidString)")

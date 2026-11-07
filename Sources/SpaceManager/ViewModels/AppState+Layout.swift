@@ -48,9 +48,9 @@ final class LayoutTerminals {
         let session: TerminalSession
         if let make = makeSession {
             session = make(paneID, pane, layout, workspace)
-        } else if let name = pane?.session {
-            session = TerminalSession(kind: .shell, name: name, workingDirectory: workspace.rootPath,
-                                      attachment: .agent(name: name, host: layout.host, agent: nil))
+        } else if let agent = pane?.agent(layoutHost: layout.host) {
+            session = TerminalSession(kind: .shell, name: agent.name, workingDirectory: workspace.rootPath,
+                                      attachment: .agent(name: agent.name, host: agent.host, agent: nil))
         } else {
             // 세션이 없는 셸 패널. 원격 워크스페이스면 그 기기의 셸이다.
             session = TerminalSession(kind: .shell, name: TerminalSession.defaultShellName(remoteHost: workspace.remoteHost),
@@ -63,7 +63,9 @@ final class LayoutTerminals {
 
     private static func matches(_ session: TerminalSession, pane: WorkspaceLayout.Pane?, host: String) -> Bool {
         switch session.attachment {
-        case .agent(let name, let sessionHost, _): return pane?.session == name && sessionHost == host
+        case .agent(let name, let sessionHost, _):
+            guard let agent = pane?.agent(layoutHost: host) else { return false }
+            return agent.name == name && agent.host == sessionHost
         case .shell: return pane?.session == nil
         }
     }
@@ -312,8 +314,8 @@ extension AppState {
     /// 앱만 바뀐다. 탭의 마지막 패널이면 탭을 닫고, 워크스페이스의 마지막 탭이면 패널을 남겨 둔다.
     /// `completion`이 없으면(화면에서 누른 경우) 실패를 창으로 알린다. 있으면(`sm to-fine`) 실패 까닭을 넘긴다.
     func moveLayoutPaneToFine(_ pane: String, in layout: WorkspaceLayout, completion: ((String?) -> Void)? = nil) {
-        guard let name = layout.panes[pane]?.session else { completion?("pane \(pane) shows no session"); return }
-        let target = layout.host == PeerDirectory.shared.localHostName ? name : name + "@" + layout.host
+        guard let (name, host) = layout.agent(inPane: pane) else { completion?("pane \(pane) shows no session"); return }
+        let target = host == PeerDirectory.shared.localHostName ? name : name + "@" + host
         MainActor.assumeIsolated {
             FineControl.attach(target) { [weak self] failure in
                 guard let self else { return }
@@ -340,9 +342,9 @@ extension AppState {
     /// 탭 칩의 "Fine으로 옮기기": 패널이 하나뿐이고 그 패널이 세션을 보일 때.
     func movableToFine(tab: WorkspaceLayout.Tab, in layout: WorkspaceLayout) -> String? {
         let panes = tab.root.paneIDs
-        guard panes.count == 1, let pane = panes.first, let name = layout.panes[pane]?.session,
+        guard panes.count == 1, let pane = panes.first, let (name, host) = layout.agent(inPane: pane),
               // Fine 탭은 Claude·Codex만 보인다(셸 세션은 Fine이 받지 않는다).
-              PeerDirectory.shared.agents.contains(where: { $0.name == name && $0.host == layout.host }) else { return nil }
+              PeerDirectory.shared.agents.contains(where: { $0.name == name && $0.host == host }) else { return nil }
         return pane
     }
 
@@ -467,8 +469,8 @@ extension AppState {
     /// 배치 탭 하나의 묶음 상태 — 그 안 패널 세션들 중 가장 급한 것.
     func layoutRollup(tab: WorkspaceLayout.Tab, in layout: WorkspaceLayout, directory: PeerDirectory) -> AgentAttention? {
         tab.root.paneIDs
-            .compactMap { layout.panes[$0]?.session }
-            .compactMap { name in directory.agents.first { $0.name == name && $0.host == layout.host } }
+            .compactMap(layout.agent(inPane:))
+            .compactMap { pane in directory.agents.first { $0.name == pane.name && $0.host == pane.host } }
             .map(directory.attention(of:))
             .max()
     }
@@ -476,8 +478,8 @@ extension AppState {
     /// 배치 탭 하나의 노치 알림들.
     func layoutNotices(tab: WorkspaceLayout.Tab, in layout: WorkspaceLayout, directory: PeerDirectory) -> [AttentionItem] {
         tab.root.paneIDs
-            .compactMap { layout.panes[$0]?.session }
-            .compactMap { name in directory.agents.first { $0.name == name && $0.host == layout.host } }
+            .compactMap(layout.agent(inPane:))
+            .compactMap { pane in directory.agents.first { $0.name == pane.name && $0.host == pane.host } }
             .compactMap(directory.notice(for:))
     }
 
@@ -486,8 +488,8 @@ extension AppState {
         var candidates: [(tab: String, pane: String, attention: AgentAttention, since: Date)] = []
         for tab in layout.tabs {
             for pane in tab.root.paneIDs {
-                guard let name = layout.panes[pane]?.session,
-                      let agent = directory.agents.first(where: { $0.name == name && $0.host == layout.host }) else { continue }
+                guard let (name, host) = layout.agent(inPane: pane),
+                      let agent = directory.agents.first(where: { $0.name == name && $0.host == host }) else { continue }
                 let attention = directory.attention(of: agent)
                 if attention.needsSEOL { candidates.append((tab.id, pane, attention, agent.since)) }
             }

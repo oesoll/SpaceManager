@@ -60,6 +60,17 @@ final class WorkspaceLayoutTests: XCTestCase {
     }
 
     /// 고르는 상자 자리: 같은 방향 줄이면 그 줄에 끼우고, 아니면 그 잎을 둘로 나눈다.
+    func testPaneNamingAnotherMachineAttachesThere() {
+        let here = WorkspaceLayout.Pane(session: "w1")
+        XCTAssertEqual(here.agent(layoutHost: "mac")?.name, "w1")
+        XCTAssertEqual(here.agent(layoutHost: "mac")?.host, "mac")
+        // sm split --attach fb-front@arch 로 맥 워크스페이스에 넣은 칸
+        let there = WorkspaceLayout.Pane(session: "fb-front@arch")
+        XCTAssertEqual(there.agent(layoutHost: "mac")?.name, "fb-front")
+        XCTAssertEqual(there.agent(layoutHost: "mac")?.host, "arch")
+        XCTAssertNil(WorkspaceLayout.Pane(session: nil, shell: true).agent(layoutHost: "mac"))
+    }
+
     func testPendingPaneIsInsertedBesideTheFocusedPane() {
         let row = LayoutNode.split(dir: .row, children: [.pane(id: "a", size: 0.5), .pane(id: "b", size: 0.5)], size: 1)
         XCTAssertEqual(row.inserting("n", beside: "a", dir: .row).paneIDs, ["a", "n", "b"])
