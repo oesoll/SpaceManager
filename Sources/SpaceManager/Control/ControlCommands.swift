@@ -114,6 +114,14 @@ enum ControlCommands {
             entry.state.moveWorkspace(from: from, to: to > from ? to + 1 : to)
             return entry.state.workspaces.map { describe($0, in: entry) }
 
+        case "ws.transfer":
+            let (entry, ws) = try workspace(r)
+            guard let to = r.string("to"), !to.isEmpty else { throw fail("to required") }
+            let target = try window(query: to)
+            guard target.state.windowKind == .workspace else { throw fail("window \(to) is not a workspace window") }
+            if target.state !== entry.state { entry.state.transferWorkspace(ws, to: target.state) }
+            return describe(ws, in: target)
+
         case "project.add":
             let (entry, ws) = try workspace(r)
             guard let path = r.string("path") else { throw fail("path required") }
@@ -474,9 +482,13 @@ enum ControlCommands {
     }
 
     private static func window(_ r: ControlRequest) throws -> WindowEntry {
+        try window(query: r.string("window"))
+    }
+
+    private static func window(query: String?) throws -> WindowEntry {
         let entries = liveWindows()
         guard !entries.isEmpty else { throw fail("no windows open") }
-        guard let query = r.string("window"), !query.isEmpty, query != "front", query != "key" else {
+        guard let query, !query.isEmpty, query != "front", query != "key" else {
             return entries.first { $0.window?.isKeyWindow == true } ?? entries.first { $0.window != nil } ?? entries[0]
         }
         if let index = Int(query), entries.indices.contains(index) { return entries[index] }

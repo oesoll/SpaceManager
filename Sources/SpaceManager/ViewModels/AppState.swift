@@ -318,6 +318,19 @@ class AppState: ObservableObject {
         persistWindowState()
     }
 
+    /// 사이드바 항목을 다른 창으로 옮긴다. 배치와 세션은 세션 층에 그대로 있고, 칸은 받은 창이 고를 때 다시 붙는다.
+    /// 받은 창의 화면은 그대로 둔다 — 비어 있던 창만 이것을 보여 준다.
+    func transferWorkspace(_ workspace: Workspace, to target: AppState) {
+        layoutTerminals.discard(layoutKey: layoutKey(for: workspace))
+        deleteWorkspace(workspace)
+        target.workspaces.append(workspace)
+        if target.selectedWorkspace == nil {
+            target.selectWorkspace(workspace)
+        } else {
+            target.persistWindowState()
+        }
+    }
+
     func selectWorkspace(_ workspace: Workspace) {
         if let current = selectedWorkspace {
             sessionsByWorkspace[current.id] = sessions

@@ -79,6 +79,17 @@ final class LayoutTerminals {
         }
     }
 
+    /// 이 창에서 그 배치의 터미널을 닫는다(세션은 계속 돈다). 다른 창이 그 배치를 맡을 때 — 두 창이 같은 세션에
+    /// 붙어 있으면 크기를 서로 바꾼다.
+    func discard(layoutKey: String) {
+        let prefix = layoutKey + "/"
+        for (key, session) in sessions where key.hasPrefix(prefix) {
+            session.cleanup()
+            sessions[key] = nil
+            lastDisplayed[key] = nil
+        }
+    }
+
     /// 세션 패널이 마지막으로 화면에 보인 때. 키는 `session(for:)`과 같은 "배치 키/패널".
     private var lastDisplayed: [String: Date] = [:]
     /// 가려진 세션 패널이 attach를 내리기까지. 세션 층은 보는 창이 하나도 없는 워크스페이스만 65분 쉰 뒤 재우므로

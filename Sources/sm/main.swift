@@ -346,7 +346,18 @@ func removeWorkspace(_ ref: String, json: Bool) -> Never {
 
 /// 사이드바 순서: INDEX(0부터) | first | last | up | down | --before WS | --after WS.
 func moveWorkspace(_ rest: [String]) -> Never {
-    guard rest.count >= 2 else { fail("usage: sm ws move WS INDEX|first|last|up|down|--before WS|--after WS") }
+    let usage = "usage: sm ws move WS INDEX|first|last|up|down|--before WS|--after WS  (다른 sm 창으로: sm ws move WS -w WINDOW)"
+    guard rest.count >= 2 || windowFlagBeforeVerb != nil else { fail(usage) }
+    // 다른 창으로: 세션은 그대로 돌고 칸은 그 창에서 다시 붙는다. 그 창의 화면은 바뀌지 않는다.
+    if let flag = rest.firstIndex(where: { $0 == "-w" || $0 == "--window" }) ?? windowFlagBeforeVerb.map({ _ in rest.count }) {
+        guard let window = flag < rest.count ? (flag + 1 < rest.count ? rest[flag + 1] : nil) : windowFlagBeforeVerb else {
+            fail("sm ws move WS -w WINDOW (창은 sm windows)")
+        }
+        let (entry, _) = requireSidebar(rest[0])
+        let moved = appCall("ws.transfer", ["ws": entry.id, "to": window]) as? [String: Any]
+        if let target = moved?["window"] as? String { printSidebarOrder(window: target) }
+        exit(0)
+    }
     let (entry, entries) = requireSidebar(rest[0])
     var order = entries.filter { $0.window == entry.window }
     guard let from = order.firstIndex(where: { $0.id == entry.id }) else { fail("사이드바 순서를 읽지 못했다") }
