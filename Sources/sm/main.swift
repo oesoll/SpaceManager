@@ -24,7 +24,8 @@ Mac app (sm here also draws the layout above; these verbs exist only on the Mac)
 
   On the Mac, `sm ws` lists the layouts together with SEOL's sidebar (the --ws value to type and the name SEOL
   uses), `sm ws new NAME [--cwd DIR] [--host arch] [-w WINDOW]` also adds it to the sidebar of that window (default:
-  the front one; sm windows lists them) without switching SEOL's view,
+  the front one; sm windows lists them) without switching SEOL's view, `sm ws move WS -w WINDOW` moves one to another
+  window,
   and --ws accepts the sidebar name (--ws 인체안내서 → saengjon, --ws flat → flat@arch).
   Options: --json, -w/--window ID|INDEX|front, --no-focus
 """
