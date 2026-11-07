@@ -23,7 +23,8 @@ Mac app (sm here also draws the layout above; these verbs exist only on the Mac)
                             window-states dump). `sm ws`/`sm tab` are the session layer's, as on every machine.
 
   On the Mac, `sm ws` lists the layouts together with SEOL's sidebar (the --ws value to type and the name SEOL
-  uses), `sm ws new NAME [--cwd DIR] [--host arch]` also adds it to the sidebar without switching SEOL's view,
+  uses), `sm ws new NAME [--cwd DIR] [--host arch] [-w WINDOW]` also adds it to the sidebar of that window (default:
+  the front one; sm windows lists them) without switching SEOL's view,
   and --ws accepts the sidebar name (--ws 인체안내서 → saengjon, --ws flat → flat@arch).
   Options: --json, -w/--window ID|INDEX|front, --no-focus
 """
@@ -208,14 +209,15 @@ func listWorkspaces(json: Bool) -> Never {
 /// `sm ws new NAME[@HOST] [--cwd DIR] [--host H]`: 배치를 그 기기에 만들고, SEOL 사이드바에도 넣는다(고르지는 않는다 —
 /// SEOL이 보던 워크스페이스는 그대로). 아치에서 만든 배치는 이 앱이 모르므로, 맥에서 만들면 둘 다 한 번에 된다.
 func newWorkspace(_ rest: [String], json: Bool) -> Never {
-    var name: String?, cwd: String?, host: String?
+    var name: String?, cwd: String?, host: String?, window: String? = windowFlagBeforeVerb
     var i = 0
     while i < rest.count {
         switch rest[i] {
         case "--cwd": i += 1; cwd = i < rest.count ? rest[i] : nil
         case "--host": i += 1; host = i < rest.count ? rest[i] : nil
+        case "-w", "--window": i += 1; window = i < rest.count ? rest[i] : nil
         case "--name": i += 1; name = i < rest.count ? rest[i] : nil
-        case let a where a.hasPrefix("-"): fail("sm ws new: 모르는 옵션 \(a) — sm ws new NAME [--cwd DIR] [--host arch]")
+        case let a where a.hasPrefix("-"): fail("sm ws new: 모르는 옵션 \(a) — sm ws new NAME [--cwd DIR] [--host arch] [-w WINDOW] (창은 sm windows)")
         default: if name == nil { name = rest[i] } else { fail("sm ws new: 이름은 하나 — sm ws new NAME [--cwd DIR] [--host arch]") }
         }
         i += 1
@@ -241,6 +243,7 @@ func newWorkspace(_ rest: [String], json: Bool) -> Never {
     var sidebarNote = "sm 앱이 꺼져 있어 사이드바에는 아직 없음 — 앱을 켜고 sm ws new를 다시 부르면 들어간다"
     var addedArgs: [String: Any] = ["path": sidebarPath, "name": parts[0], "layout": parts[0], "select": false]
     if let remote { addedArgs["host"] = remoteAlias(forHost: remote) }
+    if let window { addedArgs["window"] = window }  // 없으면 앞에 있는 창(sm windows로 번호·id를 본다)
     if FileManager.default.fileExists(atPath: socketPath) {
         do {
             let result = try send("ws.add", addedArgs)["result"] as? [String: Any] ?? [:]
@@ -390,6 +393,14 @@ let verbIndex: Int? = {
     return nil
 }()
 let verb = verbIndex.map { argv[$0] }
+// `sm -w 1 ws new X`: 동사 앞의 창 지정(세션 층으로 넘기지 않는 ws 처리에서 쓴다).
+let windowFlagBeforeVerb: String? = {
+    guard let end = verbIndex else { return nil }
+    for flag in ["-w", "--window"] {
+        if let i = argv[..<end].firstIndex(of: flag), i + 1 < end { return argv[i + 1] }
+    }
+    return nil
+}()
 let wantsJSON = argv.contains("--json")
 switch verb {
 case nil:
