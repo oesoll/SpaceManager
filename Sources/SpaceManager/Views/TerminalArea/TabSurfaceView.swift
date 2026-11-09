@@ -47,6 +47,11 @@ private struct TabSurfaceContent: View {
         return (layout, tab, workspace)
     }
 
+    /// 지금 보이는 탭(배치 키/탭). 바뀌면 떠난 패널의 마지막으로 보인 때를 적는다.
+    private var displayedTabKey: String? {
+        layoutTab.map { LayoutInteraction.tabKey($0.0, $0.1.id) }
+    }
+
     /// 이 워크스페이스에 배치가 있는지 아직 모른다 — 빈 카드로 기다린다(옛 탭을 먼저 붙이지 않는다).
     private var layoutUndecided: Bool {
         guard appState.windowKind == .workspace, let workspace = appState.selectedWorkspace else { return false }
@@ -175,6 +180,10 @@ private struct TabSurfaceContent: View {
             appState.resumeDisplayedLayoutTerminals()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
+            appState.resumeDisplayedLayoutTerminals()
+        }
+        // 탭·워크스페이스를 바꾼 순간이 떠난 패널이 마지막으로 보인 때다(LayoutTerminals.note).
+        .onChange(of: displayedTabKey) { _, _ in
             appState.resumeDisplayedLayoutTerminals()
         }
         .onChange(of: layouts.layouts) { _, _ in

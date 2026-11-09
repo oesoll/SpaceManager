@@ -18,6 +18,20 @@ final class ParkHiddenPanesTests: XCTestCase {
         XCTAssertEqual(park, ["ws@mac/c", "ws@mac/d"])
     }
 
+    /// 다시 붙은 패널을 1분 타이머 사이에 떠나도, 떠난 순간이 마지막으로 보인 때다(SEOL 11/09: 1분도 안 돼 돌아와도
+    /// 다시 붙었다).
+    func testLeavingBetweenTimerTicksCountsAsSeenThen() {
+        let terminals = LayoutTerminals()
+        let start = Date(timeIntervalSince1970: 10_000)
+        terminals.note(displayed: ["ws@mac/a"], now: start)
+        terminals.note(displayed: ["ws@mac/b"], now: start.addingTimeInterval(20))   // 탭을 바꿨다
+        XCTAssertEqual(terminals.lastSeen("ws@mac/a"), start.addingTimeInterval(20))
+        XCTAssertEqual(terminals.lastSeen("ws@mac/b"), start.addingTimeInterval(20))
+        terminals.note(displayed: [], now: start.addingTimeInterval(50))              // 창이 가려졌다
+        XCTAssertEqual(terminals.lastSeen("ws@mac/a"), start.addingTimeInterval(20))
+        XCTAssertEqual(terminals.lastSeen("ws@mac/b"), start.addingTimeInterval(50))
+    }
+
     func testNothingAttachedNothingToPutDown() {
         XCTAssertEqual(LayoutTerminals.toPark(attached: [], displayed: [], lastDisplayed: [:], now: Date(), grace: 600), [])
     }

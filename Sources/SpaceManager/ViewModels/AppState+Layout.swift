@@ -92,6 +92,8 @@ final class LayoutTerminals {
 
     /// 세션 패널이 마지막으로 화면에 보인 때. 키는 `session(for:)`과 같은 "배치 키/패널".
     private var lastDisplayed: [String: Date] = [:]
+    /// 지난번에 본 보이는 패널들. 여기서 빠지는 순간이 그 패널이 마지막으로 보인 때다.
+    private var shown: Set<String> = []
     /// 가려진 세션 패널이 attach를 내리기까지. 세션 층은 보는 창이 하나도 없는 워크스페이스만 65분 쉰 뒤 재우므로
     /// (SEOL 11/01: "꺼지는 단위는 워크스페이스 단위로") 가려진 패널이 attach를 쥐고 있으면 아무것도 잠들지 못한다.
     /// 그렇다고 가려지자마자 내리면 탭·워크스페이스를 오갈 때마다 다시 붙느라 늦다(SEOL이 짚은 전환 지연).
@@ -102,7 +104,7 @@ final class LayoutTerminals {
     /// 패널을 다시 보면 attach가 다시 뜨고, 세션 층이 잠든 세션을 깨우며 마지막 화면부터 보인다. 셸 패널은 내리면
     /// 그 셸이 끝나므로 두고, 세션 층의 세션을 보이는 패널만 내린다.
     func parkHidden(displayed: Set<String>, now: Date = Date(), grace: TimeInterval = LayoutTerminals.parkAfter) {
-        for key in displayed { lastDisplayed[key] = now }
+        note(displayed: displayed, now: now)
         let attached = Set(sessions.filter { _, session in
             if case .agent = session.attachment { return session.holdsAttach }
             return false
@@ -113,9 +115,20 @@ final class LayoutTerminals {
     }
 
     /// 보이는 패널 중 내려 둔 세션 패널(무대가 쉬는 중)을 다시 붙인다.
-    func resume(displayed: Set<String>) {
+    func resume(displayed: Set<String>, now: Date = Date()) {
+        note(displayed: displayed, now: now)
         for key in displayed { sessions[key]?.resumeIfParked() }
     }
+
+    /// 보이는 패널이 바뀔 때마다(탭·워크스페이스 전환, 창 가림, 1분 타이머) 적는다. 지금 보이는 패널과 방금 가려진
+    /// 패널은 지금이 마지막으로 보인 때다. 1분 타이머에서만 적었더니, 다시 붙은 패널을 1분 안에 떠나면 그 방문이
+    /// 적히지 않아 다음 타이머에 "10분 넘게 안 본 패널"로 내렸다 — 돌아오면 또 다시 붙었다(SEOL 11/09).
+    func note(displayed: Set<String>, now: Date = Date()) {
+        for key in shown.union(displayed) { lastDisplayed[key] = now }
+        shown = displayed
+    }
+
+    func lastSeen(_ key: String) -> Date? { lastDisplayed[key] }
 
     /// 내릴 패널: attach가 붙은 세션 패널 가운데 지금 안 보이고, 마지막으로 보인 지 `grace`가 지난 것.
     static func toPark(attached: Set<String>, displayed: Set<String>, lastDisplayed: [String: Date],
