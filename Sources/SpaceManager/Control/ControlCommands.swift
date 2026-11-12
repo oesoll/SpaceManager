@@ -243,6 +243,30 @@ enum ControlCommands {
         }
     }
 
+    /// `sm show` from an agent in a Fine tab: a session no screen shows yet opens as a Fine tab under the caller's,
+    /// so a successor lands where its predecessor was. One an sm pane already shows still comes forward in sm.
+    private static func revealBeside(fineTab: String, _ target: String, focus wantsFocus: Bool,
+                                     completion: @escaping (ControlResponse) -> Void) {
+        SessionLayer.run(["where", target, "--json"]) { result in
+            let found = (try? result.get()).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let name = found?["name"] as? String ?? target, host = found?["host"] as? String
+            let inPane = found?["pane"] is String || LayoutDirectory.shared.layouts.values.contains { layout in
+                layout.panes.keys.contains { pane in
+                    guard let agent = layout.agent(inPane: pane) else { return false }
+                    return agent.name == name && (host == nil || agent.host == host)
+                }
+            }
+            guard !inPane, found != nil else { return revealInSM(target, focus: wantsFocus, completion: completion) }
+            FineControl.request("tab.attach", ["name": target, "parent": fineTab, "focus": wantsFocus]) { reply in
+                switch reply {
+                case .ok(let row): completion(.ok(["name": target, "fineTab": (row as? [String: Any])?["id"] ?? NSNull()]))
+                case .failed(let message): completion(.error(message))
+                case .unreachable: revealInSM(target, focus: wantsFocus, completion: completion)
+                }
+            }
+        }
+    }
+
     /// sm 패널에서 세션을 연다. 어디 있는지는 세션 층이 안다(원격도, 이름의 대소문자도 맞춰 준다).
     /// `focus`: also bring sm to the front and take the keyboard. Off when an agent asks (`sm show` from an agent's
     /// shell): the pane comes forward inside its window, but SEOL's current app and typing stay (11/06 SEOL "화면
@@ -358,6 +382,8 @@ enum ControlCommands {
                         case .unreachable: completion(.error("Fine did not answer"))
                         }
                     }
+                } else if let fineTab = r.string("fineTab") {
+                    revealBeside(fineTab: fineTab, target, focus: wantsFocus, completion: completion)
                 } else {
                     revealInSM(target, focus: wantsFocus, completion: completion)
                 }

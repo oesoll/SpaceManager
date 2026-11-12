@@ -9,7 +9,8 @@ let bundleID = "com.spacemanager.app"
 let appUsage = """
 Mac app (sm here also draws the layout above; these verbs exist only on the Mac):
   sm show NAME[@HOST]       Put that agent in front of SEOL — its sm pane (keys go to it), or the Fine tab that
-                            shows it; nowhere yet → a new tab. A workspace name selects that workspace instead.
+                            shows it; nowhere yet → a new tab (run from a Fine tab: a Fine tab under yours).
+                            A workspace name selects that workspace instead.
                             This is the only command that moves SEOL's focus; layout commands never do.
   sm show | hide | toggle   Show or hide all sm windows (the menu bar icon does the same; the notch stays)
   sm to-fine NAME[@HOST]    Move the pane showing NAME to a Fine tab (the session keeps running). Back: fine move TAB sm
@@ -561,6 +562,9 @@ do {
         // An agent's call brings the pane forward inside sm but does not pull SEOL out of the app being used
         // (11/06). SEOL's own terminal (no PEER_NAME) still switches to it.
         if ProcessInfo.processInfo.environment["PEER_NAME"] != nil { args["focus"] = false }
+        // An agent in a Fine tab shows a session nobody shows yet as a Fine tab under its own — a successor lands
+        // where its predecessor was (11/12: a handoff from a Fine tab put the successor in sm, SEOL looked in Fine).
+        if let tab = ProcessInfo.processInfo.environment["FINE_TAB_ID"], !tab.isEmpty { args["fineTab"] = tab }
     case ("perf", "keys"):
         command = "perf.keys"
         args["session"] = try need(1, "sm perf keys NAME [-n COUNT]  (NAME must start with sm-bench-)")[0]
