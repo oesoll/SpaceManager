@@ -1,24 +1,26 @@
-# SpaceManager
+# sm
 
-[![SpaceManager demo](demo.gif)](docs/demo.mp4)
+**Where your agents live.**
+
+[![sm demo](demo.gif)](docs/demo.mp4)
 
 <p align="center"><a href="docs/demo.mp4"><strong>Watch the full demo (MP4)</strong></a></p>
 
-A macOS IDE for tmux-based multi-agent work with the `smux` skill.
+sm is the Mac front of [seol](https://github.com/oesoll/seol): it draws your coding agents as workspaces, tabs and panes, and changes that layout with one command per change, from you or from an agent. The agents themselves are seol's sessions, so quitting sm, closing a pane or rebooting does not end them.
 
-## Why I built this
+The app is called SpaceManager; its command is `sm`. **Install it through seol** — sm needs seol's session layer to have anything to show:
 
-I keep dozens of tmux sessions running and use Claude Code, Codex, and Gemini CLI agents in parallel. The working hierarchy is usually project → tmux session → agent pane.
-
-I built SpaceManager to see that hierarchy in one window. It shows the workspace attached to each session, the panes inside it, and recent agent activity. It is a personal tool for this workflow rather than a general replacement for a code editor or terminal emulator.
+```
+Set up seol for me: read https://raw.githubusercontent.com/oesoll/seol/main/SETUP.md and follow it.
+```
 
 ## Why it is designed this way
 
-### tmux remains the owner
+### Sessions belong to seol, not to the app
 
-SpaceManager only attaches to tmux sessions by name. It does not own the tmux server and does not terminate it when the app closes. Session persistence belongs to tmux, with `tmux-resurrect` and `tmux-continuum` handling save and restore.
+sm never owns an agent. Each one is a seol session held by its own `peer-hold` process on the machine it runs on; a pane only attaches to it (`sm-session attach NAME@HOST`). Layout is data too: a workspace's tabs and split tree live in `~/.smux/state/sm/workspaces/<ws>.json` on that machine, and the app draws the file. So an agent can rearrange your screen with the same commands you use, and nothing is lost when the app goes away.
 
-This boundary was added after real session-loss incidents. App deployment, window restoration, and tmux restoration now remain separate concerns.
+This boundary came from real session-loss incidents when tmux and the app were tangled together. Plain shell and tmux tabs still work for everything that is not an agent.
 
 ### Native windows, libghostty terminals
 
@@ -66,57 +68,47 @@ Tabs live in a strip under the terminal, where tmux's status line was, modelled 
 
 Agent state comes from `peer --all --json`, read every two seconds while a window is visible. A pane is matched to its agent through the `SM_PANE_ID` its shell receives (peer reports it as `sm:<UUID>`); tmux sessions still running agents are matched by host and session name until they move off tmux. States are told apart by shape as well as colour: a pink exclamation circle waits on you (permission or question), an amber triangle failed, the existing spinner is working, and a plain dot means it finished after you last looked at that pane. Idle panes show nothing. Workspace and tab rows show the most urgent state inside them, and ⌘J jumps to the next pane waiting on you. "Finished but unseen" is remembered by the app, not by peer, and starts empty on launch.
 
-Where the session layer keeps a workspace's layout (`~/.smux/state/sm/workspaces/<ws>.json` on the machine the workspace runs on), the window draws that file instead of a tmux tab: its tabs in the sidebar, its split tree of panes, each pane attached to the session it names. The file is the source; the app reads it (FSEvents locally, one `sm-session watch` per visible remote workspace) and changes it only through `sm-session` commands, the same ones an agent uses (`sm split`, `resize`, `focus`, `zoom`, `close`, `tab select`). Clicks and drags show at once and the command follows; a dragged boundary is previewed on screen and written once on release with `--toward`, so only its two neighbours change. A pane whose agent is still in tmux is labelled `tmux` and offers "sm으로 옮기기" (`sm-session migrate`) only while the agent is idle; `dori-*` lanes are moved by the harness.
+Where the session layer keeps a workspace's layout (`~/.smux/state/sm/workspaces/<ws>.json` on the machine the workspace runs on), the window draws that file instead of a tmux tab: its tabs in the sidebar, its split tree of panes, each pane attached to the session it names. The file is the source; the app reads it (FSEvents locally, one `sm-session watch` per visible remote workspace) and changes it only through `sm-session` commands, the same ones an agent uses (`sm split`, `resize`, `focus`, `zoom`, `close`, `tab select`). Clicks and drags show at once and the command follows; a dragged boundary is previewed on screen and written once on release with `--toward`, so only its two neighbours change. A pane whose agent is still in tmux is labelled `tmux` and can be moved into seol (`sm-session migrate`) while the agent is idle.
 
 How a pane attaches to its terminal lives in one file, `TerminalAttachment`: a login shell, or `sm-session attach NAME@HOST` for an agent session. The session layer (`sm-session`, a CLI on every machine) starts, keeps, attaches to and revives agent sessions, the work tmux used to do; it picks the local holder or `ssh -t` to the other machine. The `sm` CLI passes `spawn`, `attach`, `resume`, `ls`, `tail`, `stop` and `restore` straight to it, so `sm spawn …` is the same command on every machine.
 
 ## How to use
 
-### Requirements and current assumptions
+### Requirements
 
-- macOS 14 or later
-- Swift 5.9 / Xcode 15 or later for building
-- `tmux`; `tmux-resurrect` and `tmux-continuum` are recommended for reboot recovery
-- Claude Code CLI
+- macOS 14 or later on Apple Silicon
+- [seol](https://github.com/oesoll/seol), which installs this app, the `sm` CLI and the session layer together
+- Claude Code and/or Codex
 
-Quick conversations run Claude Code, found on your PATH. Their working directory is `~/cld`, which the app creates on first use. A local model router is optional — without it you get the models Claude Code itself offers.
+Quick conversations run Claude Code, found on your PATH, with `~/cld` as their working directory (created on first use). A local model router is optional.
 
-### Build and run
+### Build from source
 
 ```sh
 git clone https://github.com/oesoll/SpaceManager.git
 cd SpaceManager
-./scripts/test-isolated.sh
-swift build -c release
-.build/release/SpaceManager
+./scripts/test-isolated.sh            # tests with a temporary home
+scripts/package-app.sh release        # .build/SpaceManager.app and .build/release/sm
 ```
 
-The terminal layer comes from [GhosttyTerminal](https://github.com/oesoll/GhosttyTerminal) 0.1.0 or later, whose release carries a prebuilt libghostty, so no Zig is needed. That engine is built for Apple Silicon only; an Intel Mac has to build it (below).
-
-To work on the engine, check GhosttyTerminal out next to this repository (`../GhosttyTerminal`). `Package.swift` uses that sibling whenever it exists. Its `scripts/build-ghostty.sh` needs Zig 0.17 (`brew install zig`), clones Ghostty into `~/.cache/sm-ghostty`, applies `scripts/ghostty-patches/`, and builds the static library into its `Frameworks/` (about 140 MB, not committed). This repository does not currently include a general-purpose `.app` packaging script.
-
-The test wrapper gives Foundation a temporary home directory because some window-state tests instantiate the application's storage singleton. Scanner benchmarks use synthetic transcripts: `python3 scripts/benchmark-scanners.py`. See [the resource optimization measurements](docs/performance/2026-09-09-scanners.md) for the comparison and its limits.
-
-The development machine uses an existing `/Applications/WorkspaceManager.app` bundle. To refresh that bundle after a release build:
-
-```sh
-APP=/Applications/WorkspaceManager.app
-cp .build/release/SpaceManager "$APP/Contents/MacOS/SpaceManager"
-# The xterm.js resource bundle is gone since terminals moved to libghostty.
-rm -rf "$APP/Contents/Resources/SpaceManager_SpaceManager.bundle"
-codesign --force -s - "$APP"
-```
-
-Ad-hoc re-signing may require macOS Accessibility and Screen Recording permissions to be checked again.
+seol's installer runs the same script and copies the app to `/Applications` and `sm` to `~/.local/bin`. To work on the terminal engine, check out [GhosttyTerminal](https://github.com/oesoll/GhosttyTerminal) next to this repository; `Package.swift` uses that sibling when it exists (its `scripts/build-ghostty.sh` needs Zig 0.17).
 
 ### Basic workflow
 
-1. Add a project folder from the `WORKSPACES` sidebar.
-2. Select it. SpaceManager attaches to the tmux session derived from the workspace name, creating that session only when it does not already exist.
-3. Use tmux panes for agents and [`tmux-bridge`](https://github.com/ShawnPana/smux) for cross-pane messages. The CLI is included in the smux repository.
-4. Open another workspace window with `Command-N`.
-5. Open the session-based window with `Command-Option-N`. Choose a model, effort level, and direct or proxy mode in the composer.
-6. Click a recent conversation to resume its transcript-backed session.
+```sh
+sm ws new billing-api --cwd ~/src/billing-api            # a workspace in the sidebar
+sm split main.0 --right --spawn lead --kind claude        # an agent in a new pane
+sm split lead --right --spawn review --kind codex
+sm tab new --name workers --spawn w1 --kind claude
+sm arrange workers grid                                   # columns, rows, grid, main-left, main-top
+sm show review                                            # bring a pane in front of you
+```
+
+Layout commands never move your view or keyboard; only `--focus`, `sm focus`, `sm tab select` and `sm show` do. Every change prints the new shape, `*` marking what you see:
+
+```
+billing-api@mac  main*: [lead* | review] · workers: [(w1 | w2) / (w3 | w4)]
+```
 
 | Shortcut | Action |
 |---|---|
@@ -124,21 +116,16 @@ Ad-hoc re-signing may require macOS Accessibility and Screen Recording permissio
 | `Command-Option-N` | Open a session-based window |
 | `Command-Shift-N` | Add a workspace |
 | `Command-T` | Open a shell tab, or an immediate quick conversation |
-| `Command-Shift-T` | Open another tmux tab |
+| `Command-D` / `Command-Shift-D` | Split the pane right / down |
+| `Command-J` | Jump to the next pane waiting on you |
 | `Command-Option-Left/Right` | Select the previous or next tab |
-
-When the same tmux session is attached from more than one window, this tmux setting makes the active client determine the session size:
-
-```tmux
-set -g window-size latest
-```
 
 ### Optional Codex router
 
 The router binds to `127.0.0.1:4141` and is not installed as a service. Start it manually:
 
 ```sh
-cd ~/myworld/claude-codex-router
+git clone https://github.com/oesoll/claude-codex-router && cd claude-codex-router
 ./scripts/start-background.sh
 ```
 
@@ -165,16 +152,16 @@ A missing Mac checkout blocks switching to local and leaves the current tabs con
 Activity dots follow both the project path and its host.
 
 The **+ / New Workspace** sheet also offers **이 Mac / 아치 / 다른 호스트** before
-creating the first tab. Remote folders can be entered as `~/myworld/project`
+creating the first tab. Remote folders can be entered as `~/src/project`
 without creating a local copy. The equivalent CLI is
-`sm ws add ~/myworld/project --name project --host arch` (or `--host local`).
+`sm ws add ~/src/project --name project --host server` (or `--host local`).
 
 - The tab runs `ssh -t <host>` and attaches to the tmux session of the same
   name on that host, creating it there when it does not exist. The remote
   script uses the same cold-boot patience as local tmux so it never steals a
   session name that `tmux-continuum` is about to restore.
 - Paths under the local home are translated to the remote `$HOME`
-  (`/Users/me/myworld/x` → `$HOME/myworld/x`), so the same folder layout on
+  (`/Users/me/src/x` → `$HOME/src/x`), so the same folder layout on
   both machines needs no per-workspace configuration. Paths outside the home
   are sent unchanged.
 - Changing the host detaches the workspace's tabs and re-attaches them; tmux
@@ -308,9 +295,7 @@ command in the same commit.
 
 ## Credits
 
-- Demo recorded with [OpenScreen](https://github.com/siddharthvaddem/openscreen).
-- Agent orchestration uses the [smux](https://github.com/ShawnPana/smux) skill by [ShawnPana](https://github.com/ShawnPana). The development of SpaceManager itself was coordinated through this protocol.
 - Terminal rendering and input use [libghostty](https://github.com/ghostty-org/ghostty) (MIT). The surface view and its IME handling are adapted from Ghostty's macOS app.
-- Session management and recovery use [tmux](https://github.com/tmux/tmux), [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect), and [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum).
+- Early versions ran agents in tmux and passed messages with the [smux](https://github.com/ShawnPana/smux) skill by [ShawnPana](https://github.com/ShawnPana); SpaceManager itself was first built that way. Plain tmux tabs and remote tmux persistence still use [tmux](https://github.com/tmux/tmux), [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) and [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum).
 
 SpaceManager is released under the [MIT License](LICENSE).
