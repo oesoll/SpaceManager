@@ -197,7 +197,12 @@ enum FineControl {
     static var home: URL { URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".fine") }
     static var file: URL { home.appendingPathComponent("attention.json") }
     static var socket: String { home.appendingPathComponent("control.sock").path }
-    static var cli: String { NSHomeDirectory() + "/bin/fine" }
+    /// `fine` CLI: ~/bin (this Mac), ~/.local/bin (the seol installer), then Homebrew.
+    static var cli: String {
+        let home = NSHomeDirectory()
+        let candidates = [home + "/bin/fine", home + "/.local/bin/fine", "/opt/homebrew/bin/fine", "/usr/local/bin/fine"]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? candidates[0]
+    }
 
     enum Reply {
         case ok(Any)
