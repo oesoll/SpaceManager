@@ -1,15 +1,13 @@
 import SwiftUI
 
 /// 사이드바 오른쪽: 고른 워크스페이스의 탭(패널 카드들)이 창 아래 끝까지 내려오고, 아래 두 노치에 탭 칩과
-/// 다른 탭에 있는 에이전트 묶음이 선다(`BottomNotch`). 미리보기는 오른쪽 노치에서 위로 뜬다.
+/// 화면 밖 에이전트 묶음이 선다(`BottomNotch`). 미리보기는 오른쪽 노치에서 위로 뜬다.
 struct TerminalAreaView: View {
     @EnvironmentObject var appState: AppState
-    @ObservedObject private var layouts = LayoutDirectory.shared
+    @ObservedObject private var sessions = WorkspaceSessions.shared
     @ObservedObject private var peers = PeerDirectory.shared
     @StateObject private var preview = AgentPreview()
     @State private var notch = BottomNotch.none
-    /// 탭을 고른 순간(파일이 따라잡기 전) 묶음도 바로 바뀌게 화면 쪽 상태를 따라 다시 그린다.
-    @State private var interactionTick = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// 노치 안쪽 여백. 왼쪽은 칩이 카드 세로줄에 가깝게, 오른쪽은 노치 곡선에서 숨 쉴 만큼.
@@ -20,12 +18,10 @@ struct TerminalAreaView: View {
         appState.selectedWorkspace.map { appState.layoutKey(for: $0) }
     }
 
-    /// 지금 탭 말고 다른 탭(그리고 확대에 가려진 패널)의 세션. 배치와 peer만으로 계산한다.
+    /// 이 워크스페이스에서 돌지만 sm 패널에는 없는 에이전트.
     private var shelfAgents: [ShelfAgent] {
-        _ = interactionTick
-        guard let workspace = appState.selectedWorkspace,
-              let layout = layouts.layouts[appState.layoutKey(for: workspace)] else { return [] }
-        return appState.hiddenAgents(in: layout, directory: peers)
+        guard let key = layoutKey, appState.selectedLayout != nil else { return [] }
+        return ShelfAgent.from(sessions.byLayout[key] ?? [], peers: peers)
     }
 
     /// 노치 폭, 칩과 묶음이 바뀌는 움직임. 위 화면의 탭·워크스페이스 전환과 같은 스프링이라 한 몸으로 움직인다.
@@ -91,7 +87,7 @@ struct TerminalAreaView: View {
                 .animation(resize ?? .easeOut(duration: 0.15), value: layoutKey)
                 .offset(y: size.height - BottomNotch.height)
 
-                // 오른쪽 노치: 다른 탭에 있는 에이전트 묶음. 없으면 노치도 없다.
+                // 오른쪽 노치: 화면 밖 에이전트 묶음. 없으면 노치도 없다.
                 // 생길 때는 노치가 오른쪽 끝에서 열리며 로고가 따라 나오고, 사라질 때는 로고가 먼저 흐려진 뒤 노치가 닫힌다.
                 ZStack(alignment: .trailing) {
                     if !shelfAgents.isEmpty {
@@ -121,7 +117,8 @@ struct TerminalAreaView: View {
                     let height = min(600, max(280, size.height * 0.62))
                     AgentPreviewCard(agent: agent, session: session,
                                      attention: shelfAgents.first { $0.id == agent.id }?.attention ?? agent.attention,
-                                     onGoToTab: { goToTab(agent) },
+                                     onOpenInPane: { openInPane(agent) },
+                                     onOpenInTab: { openInTab(agent) },
                                      onClose: closePreview)
                         .frame(width: width, height: height)
                         .offset(x: size.width - width - 4, y: size.height - BottomNotch.height - height - 8)
@@ -133,39 +130,60 @@ struct TerminalAreaView: View {
             .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.32, dampingFraction: 1.0),
                        value: preview.agent?.id)
         }
-        .onChange(of: layoutKey) { _, _ in closePreview() }
+        .onAppear { follow() }
+        .onChange(of: layoutKey) { _, _ in
+            follow()
+            closePreview()
+        }
         .onChange(of: appState.selectedWorkspace?.id) { _, _ in
             // 다음 전환의 방향을 정할 기준(이번 전환의 칩은 이미 그려졌다).
             DispatchQueue.main.async { lastWorkspaceIndex = workspaceIndex }
         }
-        .onReceive(appState.layoutInteraction.objectWillChange) { _ in
-            DispatchQueue.main.async { interactionTick &+= 1 }
+        // 배치가 바뀌면(패널을 닫아 세션이 뒤로 갔거나, 미리보던 것을 패널로 열었다) 묶음을 바로 다시 읽는다.
+        .onChange(of: appState.selectedLayout?.version) { _, _ in
+            if let layoutKey { WorkspaceSessions.shared.refresh(layoutKey) }
         }
-        // 미리보던 세션의 탭으로 갔거나 그 패널이 사라지면 미리보기는 할 일이 끝났다.
+        // 미리보던 세션이 패널로 갔거나 끝났으면 미리보기는 할 일이 끝났다.
         .onChange(of: shelfAgents.map(\.id)) { _, ids in
             if let agent = preview.agent, !ids.contains(agent.id) { closePreview() }
         }
-        .onDisappear { preview.close() }
+        .onDisappear {
+            WorkspaceSessions.shared.stop(owner: appState.windowStateId)
+            preview.close()
+        }
     }
 
-    /// 도는 세션은 미리보기, 쉬는(잠든) 세션은 그 탭으로 — 붙으면 깨어나므로 미리보기로 깨우지 않는다.
+    private func follow() {
+        WorkspaceSessions.shared.follow(layoutKey, owner: appState.windowStateId)
+    }
+
     private func openPreview(_ agent: ShelfAgent) {
         guard let workspace = appState.selectedWorkspace else { return }
-        if agent.isRunning {
-            preview.open(agent, workingDirectory: workspace.rootPath)
-        } else {
-            goToTab(agent)
-        }
+        preview.open(agent, workingDirectory: workspace.rootPath)
     }
 
     private func closePreview() {
         preview.close()
     }
 
-    /// 그 세션이 있는 탭으로 가서 그 패널에 포커스(확대 중이었으면 세션 층이 그 탭을 앞에 둔다).
-    private func goToTab(_ agent: ShelfAgent) {
+    /// 포커스된 패널 오른쪽에 그 세션을 연다(`split --attach`).
+    private func openInPane(_ agent: ShelfAgent) {
+        guard let layout = appState.selectedLayout else { return }
+        let beside = appState.focusedLayoutPane ?? appState.displayedTab(of: layout)?.root.paneIDs.first
+        closePreview()
+        var args = ["split"]
+        if let beside { args.append(beside) }
+        appState.runLayoutCommand(args + ["--right", "--focus", "--attach", target(agent, in: layout)], layout: layout)
+    }
+
+    private func openInTab(_ agent: ShelfAgent) {
         guard let layout = appState.selectedLayout else { return }
         closePreview()
-        appState.focusLayoutPane(agent.pane, in: layout)
+        appState.runLayoutCommand(["tab", "new", "--focus", "--attach", target(agent, in: layout)], layout: layout)
+    }
+
+    /// 배치와 같은 기기의 세션이면 이름만, 아니면 `NAME@HOST`.
+    private func target(_ agent: ShelfAgent, in layout: WorkspaceLayout) -> String {
+        agent.host.isEmpty || agent.host == layout.host ? agent.name : agent.name + "@" + agent.host
     }
 }

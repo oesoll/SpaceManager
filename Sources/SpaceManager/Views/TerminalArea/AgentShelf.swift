@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// 오른쪽 노치: SEOL이 연 탭에 있지만 지금 화면에 없는 세션(SEOL 11/15). 다른 탭의 패널, 확대에 가려진 패널.
+/// 오른쪽 노치: 이 워크스페이스에서 돌지만 sm 패널에는 없는 에이전트(SEOL 11/15). 에이전트가 띄운 일꾼,
+/// 패널을 닫아 뒤로 간 세션 같은 것들이다.
 ///
 /// 하니스 로고가 겹쳐 오른쪽으로 놓이고, 셋을 넘으면 "+N"으로 줄인다 — 화면 밖에서 무엇이 도는지가 한눈에
 /// 보이는 게 할 일이다. 포인터를 올리면 목록이 노치에서 위로 펼쳐지고(노치가 원점이다), 이름을 누르면 미리보기가
@@ -41,7 +42,7 @@ struct AgentShelf: View {
             .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 1.0),
                        value: isExpanded)
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("다른 탭의 에이전트 \(agents.count)개")
+            .accessibilityLabel("화면 밖 에이전트 \(agents.count)개")
     }
 
     private var stack: some View {
@@ -109,7 +110,7 @@ private struct AgentShelfList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("다른 탭에 있는 에이전트 · \(agents.count)")
+            Text("화면 밖에서 도는 에이전트 · \(agents.count)")
                 .font(.system(size: 11, weight: .semibold))
                 .tracking(0.2)
                 .foregroundStyle(Color(Chrome.textSecondary))
@@ -151,21 +152,23 @@ private struct AgentShelfRow: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Color(Chrome.textPrimary))
                     .lineLimit(1)
-                Text(agent.isRunning ? agent.tabName : agent.tabName + " · 쉬는 중")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Color(Chrome.textTertiary))
-                    .lineLimit(1)
+                if let parent = agent.parent {
+                    Text("\(parent)이 띄움")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Color(Chrome.textTertiary))
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 6)
             AgentStateMark(attention: agent.attention)
-            if let since = agent.since, agent.attention.needsSEOL {
-                Text(PaneBadge.age(since: since))
+            if let lastActive = agent.lastActive {
+                Text(PaneBadge.age(since: lastActive))
                     .font(.system(size: 10.5).monospacedDigit())
                     .foregroundStyle(Color(Chrome.textTertiary))
             }
         }
         .padding(.horizontal, 7)
-        .frame(height: 36)
+        .frame(height: agent.parent == nil ? 28 : 36)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
             .fill(Color(isHovering ? Chrome.hover : .clear)))
         .scaleEffect(isPressed ? 0.98 : 1)
@@ -177,15 +180,15 @@ private struct AgentShelfRow: View {
             .onChanged { _ in isPressed = true }
             .onEnded { _ in isPressed = false })
         .onTapGesture(perform: open)
-        .help(agent.isRunning ? "\(agent.name) 미리보기" : "\(agent.tabName) 탭으로 가기")
+        .help("\(agent.name) 미리보기")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(agent.name), \(agent.tabName) 탭, \(AgentStateMark.spokenName(agent.attention))")
+        .accessibilityLabel("\(agent.name), \(AgentStateMark.spokenName(agent.attention))")
         .accessibilityAddTraits(.isButton)
     }
 }
 
-/// 미리보기: 그 세션에 붙은 진짜 터미널을 노치 위에 띄운다. 도는 세션만 연다 — 잠든 세션은 붙으면 깨어나므로
-/// 미리보기 대신 그 탭으로 간다. 붙은 동안은 입력하면 에이전트에게 간다. 닫으면 붙기만 끊고 세션은 계속 돈다.
+/// 미리보기: 그 세션에 붙은 진짜 터미널을 노치 위에 띄운다. 목록에는 도는 세션만 있어 붙어도 깨우지 않는다.
+/// 붙은 동안은 입력하면 에이전트에게 간다. 닫으면 붙기만 끊고 세션은 계속 돈다.
 final class AgentPreview: ObservableObject {
     @Published private(set) var agent: ShelfAgent?
     private(set) var session: TerminalSession?
@@ -209,7 +212,8 @@ struct AgentPreviewCard: View {
     let agent: ShelfAgent
     @ObservedObject var session: TerminalSession
     let attention: AgentAttention
-    let onGoToTab: () -> Void
+    let onOpenInPane: () -> Void
+    let onOpenInTab: () -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -220,11 +224,14 @@ struct AgentPreviewCard: View {
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Color(Chrome.textPrimary))
                 AgentStateMark(attention: attention)
-                Text(agent.tabName)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color(Chrome.textTertiary))
+                if let parent = agent.parent {
+                    Text("\(parent)이 띄움")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Color(Chrome.textTertiary))
+                }
                 Spacer(minLength: 8)
-                PreviewButton(title: "\(agent.tabName) 탭으로 가기", isPrimary: true, action: onGoToTab)
+                PreviewButton(title: "새 탭으로", isPrimary: false, action: onOpenInTab)
+                PreviewButton(title: "패널로 열기", isPrimary: true, action: onOpenInPane)
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .semibold))

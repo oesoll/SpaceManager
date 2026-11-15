@@ -85,7 +85,7 @@ final class PaneCaptureTests: XCTestCase {
             row("flat-rev", .idle, since: now.addingTimeInterval(-600)), row("flat-engine", .working, since: now),
         ]), now: now)
 
-        // 오른쪽 노치에는 보이지 않는 engine 탭의 세션(flat-engine, flat-sol)이 오른다.
+        // 오른쪽 노치(화면 밖 에이전트)는 세션 층이 없는 격리 홈에서는 비어 있다.
         let window = try openWindow(CaptureLayout(appState: appState), dark: appearance == "dark")
         defer { window.orderOut(nil) }
         LayoutDirectory.shared.reloadLocal()
