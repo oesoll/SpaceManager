@@ -191,6 +191,16 @@ indirect enum LayoutNode: Decodable, Equatable {
         }
     }
 
+    /// 두 패널의 자리를 바꾼 트리(`sm swap A B`와 같다: 잎의 패널 id만 맞바꾸고 몫은 자리에 남는다).
+    func swappingPanes(_ a: String, _ b: String) -> LayoutNode {
+        switch self {
+        case .pane(let id, let size):
+            return .pane(id: id == a ? b : id == b ? a : id, size: size)
+        case .split(let dir, let children, let size):
+            return .split(dir: dir, children: children.map { $0.swappingPanes(a, b) }, size: size)
+        }
+    }
+
     func child(at path: [Int]) -> LayoutNode? {
         guard let step = path.first else { return self }
         guard case .split(_, let children, _) = self, children.indices.contains(step) else { return nil }

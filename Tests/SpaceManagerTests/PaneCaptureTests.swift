@@ -37,121 +37,12 @@ final class PaneCaptureTests: XCTestCase {
         try encoder.encode(workspaces).write(to: storage.appendingPathComponent("workspaces.json"))
         UserDefaults.standard.set(appearance, forKey: "preferredAppearance")
 
-        let appState = AppState(windowKind: .workspace)
+        let appState = AppState()
         let flat = try XCTUnwrap(appState.workspaces.first { $0.name == "flat" })
         appState.selectWorkspace(flat)
-        appState.addShellTab()
-        let tab = try XCTUnwrap(appState.selectedSession)
-        tab.name = "main"
         let flatWorkspace = try XCTUnwrap(appState.selectedWorkspace)
-        func shell(_ id: UUID) -> TerminalSession {
-            TerminalSession(id: id, kind: .shell, name: "zsh", workingDirectory: flatWorkspace.rootPath)
-        }
-        if env["SM_CAPTURE_SCENE"] == "layout" || env["SM_CAPTURE_SCENE"] == "tabswitch" {
-            try captureLayout(appState: appState, workspace: flatWorkspace, appearance: appearance, home: home,
-                              measureTabs: env["SM_CAPTURE_SCENE"] == "tabswitch")
-            return
-        }
-        if env["SM_CAPTURE_SCENE"] == "picker" {
-            try capturePicker(appState: appState, tab: tab, shell: shell, appearance: appearance, home: home)
-            return
-        }
-        let built = appState.panes.ensureGroup(for: tab)
-        built.split(.horizontal, make: shell)
-        built.split(.vertical, make: shell)
-        let group = try XCTUnwrap(appState.selectedPaneGroup)
-        let ids = group.paneIDs
-        XCTAssertEqual(ids.count, 3)
-
-        // 가짜 peer 행: 왼쪽은 일하는 중, 오른쪽 위는 권한을 기다림, 오른쪽 아래는 끝났는데 아직 안 봄.
-        let directory = PeerDirectory.shared
-        let local = directory.localHostName
-        let t0 = Date()
-        func row(_ name: String, pane: UUID, _ state: PeerState, since: Date, reason: String? = nil) -> PeerAgent {
-            PeerAgent(id: "claude:" + name, name: name, host: local, target: "sm:" + pane.uuidString,
-                      state: state, reason: reason, since: since)
-        }
-        let tmuxBlocked = PeerAgent(id: "claude:inche-video", name: "inche-video", host: local, target: "%9",
-                                    state: .blocked, reason: "question", since: t0.addingTimeInterval(-420),
-                                    group: workspaces[1].effectiveTmuxSessionName)
-        let tmuxWorking = PeerAgent(id: "claude:harness-scout", name: "harness-scout", host: local, target: "%5",
-                                    state: .working, since: t0, group: workspaces[2].effectiveTmuxSessionName)
-        directory.apply(PeerListing(peers: [
-            row("frontend", pane: ids[0], .working, since: t0.addingTimeInterval(-40)),
-            row("qa", pane: ids[1], .blocked, since: t0.addingTimeInterval(-185), reason: "permission"),
-            row("rev", pane: ids[2], .working, since: t0.addingTimeInterval(-900)),
-            tmuxBlocked, tmuxWorking,
-        ]), now: t0)
-        directory.apply(PeerListing(peers: [
-            row("frontend", pane: ids[0], .working, since: t0.addingTimeInterval(-40)),
-            row("qa", pane: ids[1], .blocked, since: t0.addingTimeInterval(-185), reason: "permission"),
-            row("rev", pane: ids[2], .idle, since: t0.addingTimeInterval(1), reason: "turn-ended"),
-            tmuxBlocked, tmuxWorking,
-        ]), now: t0.addingTimeInterval(2))
-        group.focus(ids[0])
-
-        // 셸에서 찍을 에이전트 화면.
-        let screens = [
-            """
-            \u{1b}[1m⏺\u{1b}[0m Read(src/app/checkout/page.tsx)
-              ⎿  Read 214 lines
-
-            \u{1b}[1m⏺\u{1b}[0m Update(src/components/PriceRow.tsx)
-              ⎿  Updated src/components/PriceRow.tsx with 3 additions and 1 removal
-                  41  -  const total = Math.round(price * qty)
-                  41  +  const total = roundKRW(price * qty)
-
-            \u{1b}[1m⏺\u{1b}[0m 반올림을 한 함수로 모았습니다. 장바구니 합계와 결제 요약이
-              같은 값을 쓰는지 테스트로 확인하겠습니다.
-
-            \u{1b}[38;5;210m✻\u{1b}[0m Running tests… \u{1b}[2m(38s · esc to interrupt)\u{1b}[0m
-            """,
-            """
-            \u{1b}[1m⏺\u{1b}[0m 결제 흐름 E2E를 돌려 보겠습니다.
-
-            ╭───────────────────────────────────────────╮
-            │ \u{1b}[1mBash command\u{1b}[0m                              │
-            │                                           │
-            │   pnpm playwright test checkout.spec.ts   │
-            │                                           │
-            │ Do you want to proceed?                   │
-            │ \u{1b}[38;5;210m❯ 1. Yes\u{1b}[0m                                  │
-            │   2. Yes, and don't ask again             │
-            │   3. No, and tell Claude what to do       │
-            ╰───────────────────────────────────────────╯
-            """,
-            """
-            \u{1b}[1m⏺\u{1b}[0m 리뷰를 마쳤습니다. 결제 금액 반올림이 두 군데에서 다릅니다.
-              - PriceRow는 Math.round, OrderSummary는 Math.floor
-              - 1,274원짜리 상품 3개에서 1원이 어긋납니다
-
-            \u{1b}[2m>\u{1b}[0m
-            """,
-        ]
-        let screenDir = home.appendingPathComponent("screens")
-        try FileManager.default.createDirectory(at: screenDir, withIntermediateDirectories: true)
-        for (index, text) in screens.enumerated() {
-            try text.write(to: screenDir.appendingPathComponent("\(index).txt"), atomically: true, encoding: .utf8)
-        }
-
-        let root = CaptureLayout(appState: appState)
-        let window = try openWindow(root, dark: appearance == "dark")
-        defer { window.orderOut(nil) }
-        for (index, id) in ids.enumerated() {
-            let file = screenDir.appendingPathComponent("\(index).txt").path
-            let terminal = group.session(for: id)?.terminalView
-            terminal?.sendText("clear; cat '\(file)'; sleep 600")
-            terminal?.pressReturn()
-        }
-        RunLoop.main.run(until: Date().addingTimeInterval(2.5))
-        let image = try capture(window)
-        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
-        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(".build/window-capture")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try png.write(to: folder.appendingPathComponent("panes-\(appearance).png"))
-        for id in ids { group.session(for: id)?.cleanup(force: true) }
+        try captureLayout(appState: appState, workspace: flatWorkspace, appearance: appearance, home: home,
+                          measureTabs: env["SM_CAPTURE_SCENE"] == "tabswitch")
     }
 
     /// 세션 층의 배치 데이터를 그대로 그린다: 탭 둘, main은 왼쪽 하나와 오른쪽 위아래 둘(n-ary 트리).
@@ -163,7 +54,7 @@ final class PaneCaptureTests: XCTestCase {
         let folder = home.appendingPathComponent(".smux/state/sm/workspaces")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let json = """
-        {"schema": 1, "workspace": "\(workspace.effectiveTmuxSessionName)", "host": "\(host)", "cwd": "\(workspace.rootPath)",
+        {"schema": 1, "workspace": "\(workspace.effectiveLayoutName)", "host": "\(host)", "cwd": "\(workspace.rootPath)",
          "version": 3, "active_tab": "t-main",
          "tabs": [
           {"id": "t-main", "name": "main", "focus": "p-a", "zoom": null,
@@ -181,7 +72,7 @@ final class PaneCaptureTests: XCTestCase {
 
         // 세션 층 없이 찍는다: 패널마다 셸을 띄우고 에이전트 화면은 텍스트로 흉내 낸다.
         appState.layoutTerminals.makeSession = { paneID, pane, _, workspace in
-            TerminalSession(kind: .shell, name: pane?.session ?? "zsh", workingDirectory: workspace.rootPath)
+            TerminalSession(name: pane?.session ?? "zsh", workingDirectory: workspace.rootPath)
         }
         let now = Date()
         func row(_ name: String, _ state: PeerState, since: Date, reason: String? = nil) -> PeerAgent {
@@ -194,6 +85,7 @@ final class PaneCaptureTests: XCTestCase {
             row("flat-rev", .idle, since: now.addingTimeInterval(-600)), row("flat-engine", .working, since: now),
         ]), now: now)
 
+        // 오른쪽 노치에는 보이지 않는 engine 탭의 세션(flat-engine, flat-sol)이 오른다.
         let window = try openWindow(CaptureLayout(appState: appState), dark: appearance == "dark")
         defer { window.orderOut(nil) }
         LayoutDirectory.shared.reloadLocal()
@@ -222,6 +114,9 @@ final class PaneCaptureTests: XCTestCase {
         try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
         try png.write(to: out.appendingPathComponent("layout-\(appearance).png"))
         if measureTabs { try measureTabSwitches(appState: appState, window: window, out: out) }
+        if ProcessInfo.processInfo.environment["SM_CAPTURE_SCENE"] == "swap" {
+            try dragToSwap(appState: appState, layout: layout, window: window, out: out)
+        }
         if ProcessInfo.processInfo.environment["SM_CAPTURE_SPLIT"] == "1" {
             try measureSplitMotion(appState: appState, layout: layout, workspace: workspace, window: window, out: out)
         }
@@ -303,65 +198,59 @@ final class PaneCaptureTests: XCTestCase {
         }
     }
 
-    /// 고르는 상자 시안: 왼쪽은 일하는 에이전트, 오른쪽은 ⌘D로 막 생긴 자리와 그 안의 상자.
+    /// 오른쪽 위 패널(p-b)의 윗가장자리를 잡아 오른쪽 아래(p-c) 위에 놓는다 — 사람의 마우스와 같은 이벤트로.
+    /// 끄는 도중을 찍고, 놓은 뒤에는 바꾼 모양(p-b ↔ p-c)이 먼저 그려졌는지 본다.
     @MainActor
-    private func capturePicker(appState: AppState, tab: TerminalSession, shell: (UUID) -> TerminalSession,
-                               appearance: String, home: URL) throws {
-        let group = appState.panes.ensureGroup(for: tab)
-        appState.splitPane(.horizontal)
-        let pickerID = try XCTUnwrap(group.picking.first)
-        let context = try XCTUnwrap(group.pickerContexts[pickerID])
-        // 상자는 모델·세션 목록을 뒤에서 읽는다. 그 결과가 아래 예시를 덮지 않게 먼저 끝나기를 기다린다.
-        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
-        let now = Date()
-        context.claudeModels = [
-            AgentModelChoice(id: "claude-opus-5-5", name: "Opus 5.5", efforts: [.low, .medium, .high, .xhigh, .max], defaultEffort: .high),
-            AgentModelChoice(id: "claude-sonnet-5-5", name: "Sonnet 5.5", efforts: [.low, .medium, .high], defaultEffort: .high),
-        ]
-        context.backgroundSessions = [
-            AgentPickerSession(name: "flat-qa", engine: .claude, status: .running, lastActive: now, attention: .blocked),
-            AgentPickerSession(name: "flat-engine", engine: .codex, status: .running, lastActive: now, attention: .working),
-            AgentPickerSession(name: "flat-rev", engine: .claude, status: .ended, lastActive: now.addingTimeInterval(-2400)),
-        ]
-        UserDefaults.standard.removeObject(forKey: "agentPicker.last")
-        let directory = PeerDirectory.shared
-        directory.apply(PeerListing(peers: [
-            PeerAgent(id: "claude:frontend", name: "frontend", host: directory.localHostName,
-                      target: "sm:" + tab.id.uuidString, state: .working, since: now),
-        ]), now: now)
-
-        let screens = home.appendingPathComponent("screens")
-        try FileManager.default.createDirectory(at: screens, withIntermediateDirectories: true)
-        try """
-        \u{1b}[1m⏺\u{1b}[0m Update(src/components/PriceRow.tsx)
-          ⎿  Updated src/components/PriceRow.tsx with 3 additions and 1 removal
-
-        \u{1b}[1m⏺\u{1b}[0m 반올림을 한 함수로 모았습니다. 장바구니 합계와 결제 요약이
-          같은 값을 쓰는지 테스트로 확인하겠습니다.
-
-        \u{1b}[38;5;210m✻\u{1b}[0m Running tests… \u{1b}[2m(38s · esc to interrupt)\u{1b}[0m
-        """.write(to: screens.appendingPathComponent("left.txt"), atomically: true, encoding: .utf8)
-
-        let window = try openWindow(CaptureLayout(appState: appState), dark: appearance == "dark")
-        defer { window.orderOut(nil) }
-        let left = tab.terminalView
-        left?.sendText("clear; cat '\(screens.appendingPathComponent("left.txt").path)'; sleep 600")
-        left?.pressReturn()
-        RunLoop.main.run(until: Date().addingTimeInterval(2.5))
-        let image = try capture(window)
-        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
-        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(".build/window-capture")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try png.write(to: folder.appendingPathComponent("picker-\(appearance).png"))
-        tab.cleanup(force: true)
+    private func dragToSwap(appState: AppState, layout: WorkspaceLayout, window: NSWindow, out: URL) throws {
+        let content = try XCTUnwrap(window.contentView)
+        // 영역: 바깥 여백 8 + 사이드바 184 + 간격 8. p-a가 0.55, 오른쪽 열이 0.45(위아래 반씩).
+        let area = CGRect(x: 200, y: 8, width: content.bounds.width - 208, height: content.bounds.height - 16)
+        let leftWidth = ((area.width - 8) * 0.55).rounded()
+        let right = CGRect(x: area.minX + leftWidth + 8, y: area.minY, width: area.width - leftWidth - 8, height: area.height)
+        let grab = CGPoint(x: right.midX - 60, y: right.minY + 3)
+        let drop = CGPoint(x: right.midX, y: right.minY + right.height * 0.75)
+        func event(_ type: NSEvent.EventType, _ point: CGPoint) {
+            let location = NSPoint(x: point.x, y: content.bounds.height - point.y)
+            if let e = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                                          pressure: type == .leftMouseUp ? 0 : 1) {
+                NSApp.sendEvent(e)
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.016))
+        }
+        // 격리 홈에는 세션 층이 없다. 명령이 실패하면 앱은 미리 그린 모양을 걷으므로(옳은 동작), 성공만 답하는
+        // 세션 층을 잠깐 둔다.
+        let stub = URL(fileURLWithPath: NSHomeDirectory() + "/.smux/bin/sm-session")
+        try FileManager.default.createDirectory(at: stub.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/sh\necho '{}'\n".write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+        defer { try? FileManager.default.removeItem(at: stub) }
+        event(.leftMouseDown, grab)
+        for step in 1...24 {
+            let t = CGFloat(step) / 24
+            event(.leftMouseDragged, CGPoint(x: grab.x + (drop.x - grab.x) * t, y: grab.y + (drop.y - grab.y) * t))
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        if let mid = try? capture(window) {
+            try NSBitmapImageRep(cgImage: mid).representation(using: .png, properties: [:])?
+                .write(to: out.appendingPathComponent("swap-dragging.png"))
+        }
+        event(.leftMouseUp, drop)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))   // 명령의 답이 돌아온 뒤에도 남아 있는지
+        let held = try XCTUnwrap(appState.layoutInteraction.rootOverride, "dropping on another pane did not swap")
+        let tab = try XCTUnwrap(layout.tabs.first { $0.id == "t-main" })
+        XCTAssertEqual(held.root.paneIDs, tab.root.swappingPanes("p-b", "p-c").paneIDs)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        if let end = try? capture(window) {
+            try NSBitmapImageRep(cgImage: end).representation(using: .png, properties: [:])?
+                .write(to: out.appendingPathComponent("swap-dropped.png"))
+        }
     }
 
     @MainActor
     private func openWindow(_ root: some View, dark: Bool) throws -> NSWindow {
         let size = NSSize(width: 1240, height: 780)
-        let window = NSWindow(contentRect: NSRect(x: 40, y: 40, width: size.width, height: size.height),
+        let window = CaptureWindow(contentRect: NSRect(x: 40, y: 40, width: size.width, height: size.height),
                               styleMask: [.titled, .fullSizeContentView, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
@@ -383,6 +272,13 @@ final class PaneCaptureTests: XCTestCase {
         let createImage = unsafeBitCast(try XCTUnwrap(dlsym(handle, "CGWindowListCreateImage")), to: CreateImage.self)
         return try XCTUnwrap(createImage(.null, 1 << 3, UInt32(window.windowNumber), 1)?.takeRetainedValue())
     }
+}
+
+/// 시험 프로세스는 앞에 나설 수 없어 창이 키 창이 되지 못한다. 키 창이 아니면 첫 클릭은 창을 앞으로
+/// 가져오는 데 쓰이므로(macOS 관례), 사람이 이미 보고 있는 창처럼 키 창으로 둔다.
+private final class CaptureWindow: NSWindow {
+    override var isKeyWindow: Bool { true }
+    override var canBecomeKey: Bool { true }
 }
 
 /// ContentView의 작업 창 배치와 같다(단색 바탕, 사이드바 카드 184, 터미널 카드, 8 간격, 12 라운딩).

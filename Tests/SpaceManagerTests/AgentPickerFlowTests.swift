@@ -2,37 +2,6 @@ import XCTest
 @testable import SpaceManager
 
 final class AgentPickerFlowTests: XCTestCase {
-    private func tab() -> TerminalSession {
-        TerminalSession(kind: .shell, name: "zsh", workingDirectory: "/tmp")
-    }
-
-    /// ⌘D는 자리를 만들고 상자를 띄운다. 취소하면 흔적 없이 사라지고 포커스는 원래 패널로 돌아간다.
-    func testCancelLeavesNoTrace() {
-        let anchor = tab()
-        let group = PaneGroup(anchor: anchor)
-        let before = group.layout
-        let id = group.splitForPicker(.horizontal)
-        XCTAssertTrue(group.picking.contains(id))
-        XCTAssertEqual(group.focused, id)
-        XCTAssertNil(group.session(for: id), "고르기 전에는 터미널이 없다")
-        group.cancelPicker(id)
-        XCTAssertEqual(group.layout, before)
-        XCTAssertEqual(group.focused, anchor.id)
-        XCTAssertTrue(group.picking.isEmpty)
-    }
-
-    /// 고르면 그 자리에 터미널이 붙는다(같은 자리, 같은 id).
-    func testResolveAttachesInPlace() {
-        let group = PaneGroup(anchor: tab())
-        let id = group.splitForPicker(.vertical)
-        let session = TerminalSession(id: id, kind: .shell, name: "flat-claude-1", workingDirectory: "/tmp",
-                                      attachment: .agent(name: "flat-claude-1", host: "mac", agent: nil))
-        group.resolvePicker(id, with: session)
-        XCTAssertFalse(group.picking.contains(id))
-        XCTAssertTrue(group.session(for: id) === session)
-        XCTAssertEqual(group.layout.paneIDs.last, id)
-    }
-
     /// 모델·effort는 엔진의 래퍼가 받는 모양으로, 세션은 이 패널에 묶여 뜬다.
     func testSpawnArgumentsFollowEachWrapper() {
         let claude = AgentLaunchSpec(engine: .claude, modelID: "claude-opus-5-5", effort: .high, name: "flat-claude-1")

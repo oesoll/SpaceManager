@@ -35,12 +35,10 @@ final class WindowCaptureTests: XCTestCase {
 
         let tag = env["SM_CAPTURE_TAG"].map { "-\($0)" } ?? ""
         // 첫 창만 레거시 목록을 이관받는다. 한 프로세스에 한 장면씩 — SM_CAPTURE_CASE로 고른다.
-        let cases = [("workspace-dark", WindowKind.workspace, "dark"),
-                     ("workspace-light", .workspace, "light"),
-                     ("quick", .quick, "light")]
-        for (name, kind, appearance) in cases where name == (env["SM_CAPTURE_CASE"] ?? "workspace-dark") {
+        let cases = [("workspace-dark", "dark"), ("workspace-light", "light")]
+        for (name, appearance) in cases where name == (env["SM_CAPTURE_CASE"] ?? "workspace-dark") {
             UserDefaults.standard.set(appearance, forKey: "preferredAppearance")
-            let image = try capture(ContentView(windowKind: kind), dark: appearance == "dark")
+            let image = try capture(ContentView(), dark: appearance == "dark")
             let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
             let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
                 .deletingLastPathComponent().deletingLastPathComponent()

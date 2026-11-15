@@ -31,7 +31,7 @@ final class RevealTests: XCTestCase {
 
         // 저장소는 프로세스에 하나라 다른 시험이 먼저 읽어 둔다 — 파일에 기대지 않고 이 창에 직접 만든다.
         if Self.window == nil {
-            let state = AppState(windowKind: .workspace)
+            let state = AppState()
             XCTAssertNil(state.createWorkspace(rootPath: dir.path))
             Self.window = state
         }

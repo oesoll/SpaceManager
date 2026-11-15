@@ -3,39 +3,24 @@ import SwiftUI
 import Combine
 import GhosttyTerminal
 
-enum TabKind: String, Codable {
-    case tmuxMain    // 워크스페이스 고정 탭 — 워크스페이스 tmux 세션에 attach
-    case shell       // 순수 셸 탭 — 앱 재시작 시 새 셸로 시작 (복구 없음, 명시적 한계)
-    case tmuxExtra   // 추가 tmux 탭 — <세션명>-N, 재부팅 후에도 복구됨
-    case quick       // 홈에서 로그인 셸로 ccv를 직접 실행하는 일회성 대화 PTY
-}
-
-/// 터미널 탭 하나. libghostty 표면(PTY와 프로세스를 쥔다)을 소유해
-/// SwiftUI 뷰 업데이트를 넘어 터미널을 살아있게 한다 (기존 세션 소유 패턴 계승).
+/// 패널 하나의 터미널. libghostty 표면(PTY와 프로세스를 쥔다)을 소유해
+/// SwiftUI 뷰 업데이트를 넘어 터미널을 살아있게 한다. 무엇에 붙는지(셸 / 세션 층의 세션)는 `attachment`가 말한다.
 final class TerminalSession: Identifiable, ObservableObject, Equatable {
     let id: UUID
-    let kind: TabKind
     @Published var name: String
     @Published var isRunning: Bool = false
     @Published var startError: String?
-    /// 원격 tmux 연결이 끊겨 다시 붙는 중. 새 연결이 첫 출력을 보낼 때까지 유지된다 —
+    /// 세션 패널의 attach가 끊겨 다시 붙는 중. 새 연결이 붙을 때까지 유지된다 —
     /// ssh 접속(프록시 경유 수 초) 동안에도 화면은 끊기기 전 그대로 두고 배지만 띄운다.
     @Published private(set) var isReconnecting = false
-    /// 마지막으로 실패한 연결에서 ssh가 남긴 한 줄. 배지 툴팁에만 쓴다.
-    @Published private(set) var lastConnectionFailure: String?
     var workingDirectory: String
-    /// tmuxMain/tmuxExtra가 attach할 세션명 (shell이면 nil)
-    let tmuxSessionName: String?
-    /// ssh 호스트 별칭. 설정되면 tmux 서버(또는 셸)가 그 호스트에서 돈다.
+    /// ssh 호스트 별칭. 셸 패널이면 그 기기의 셸이다(세션 패널은 세션 층이 기기를 고른다).
     let remoteHost: String?
-    let quickLaunch: QuickLaunch?
-    let quickConfiguration: QuickSessionConfiguration
     /// 셸 패널이 무엇에 붙는가(로그인 셸 또는 peer holder의 에이전트). 붙이는 방법은 TerminalAttachment에만 있다.
     let attachment: TerminalAttachment
     /// 배치 데이터의 패널이면 그 id(`p-…`)와 워크스페이스. 패널 안 셸이 `sm split`처럼 자기 자리를 알게
-    /// `SM_PANE_ID`·`SM_WORKSPACE`로 넘긴다(세션 층 계약). 없으면 탭 id를 `SM_PANE_ID`로 쓴다.
+    /// `SM_PANE_ID`·`SM_WORKSPACE`로 넘긴다(세션 층 계약). 없으면 이 터미널의 id를 `SM_PANE_ID`로 쓴다.
     var layoutPane: (id: String, workspace: String)?
-    private let initialName: String
 
     /// 지금 화면에 붙은 터미널. libghostty 표면이 PTY와 자식 프로세스를 직접 쥔다.
     private(set) var terminalView: GhosttyTerminalView?
@@ -103,38 +88,20 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         }
     }
     private var started = false
-    private var quickSessionId: String?
-    private var quickIdentityTimer: Timer?
-    private var quickTitleCancellable: AnyCancellable?
-    private var isTrackingQuickTitle = false
     private var reconnectTimer: Timer?
     private var reconnectAttempt = 0
     /// 재연결 중 새로 띄운 표면. 붙었다고 볼 때까지 화면에는 끊기기 전 표면을 그대로 둔다.
     private var pendingView: GhosttyTerminalView?
     private var pendingTimer: Timer?
-    /// 원격 tmux 탭의 ssh stderr. 탭 id가 아니라 객체마다 따로 둔다 — 호스트 전환은 같은
-    /// id로 새 세션을 만들기 때문에, 옛 객체가 정리되며 새 객체의 로그를 지우면 안 된다.
-    let sshErrorLogPath = (NSTemporaryDirectory() as NSString)
-        .appendingPathComponent("space-manager-ssh-\(UUID().uuidString).log")
 
-    init(id: UUID = UUID(), kind: TabKind, name: String,
-         workingDirectory: String, tmuxSessionName: String? = nil,
-         remoteHost: String? = nil,
-         quickLaunch: QuickLaunch? = nil,
-         quickConfiguration: QuickSessionConfiguration = .default,
+    init(id: UUID = UUID(), name: String, workingDirectory: String, remoteHost: String? = nil,
          attachment: TerminalAttachment = .shell) {
         self.attachment = attachment
         self.id = id
-        self.kind = kind
-        self.palette = kind == .quick ? .quickLight : .workspaceDark
+        self.palette = .workspaceDark
         self.name = name
-        self.initialName = name
         self.workingDirectory = workingDirectory
-        self.tmuxSessionName = tmuxSessionName
         self.remoteHost = remoteHost
-        self.quickLaunch = quickLaunch
-        self.quickConfiguration = quickConfiguration
-        self.quickSessionId = quickLaunch?.resumeSessionId
         observeWake()
     }
 
@@ -147,20 +114,10 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         return view
     }
 
-    /// Quick은 클릭 순간 Claude를 띄운다. 표면은 창에 붙기 전에도 프로세스를 돌린다.
-    func startQuickImmediately() {
-        guard kind == .quick else { return }
-        _ = getOrCreateTerminal()
-    }
-
     /// 이 탭의 명령으로 새 표면을 만든다(= 새 프로세스).
     /// `sizeHint`: 재연결할 때 끊긴 표면의 크기. 없으면(처음) 창에 들어가 크기를 안 뒤에 띄운다.
-    /// Quick은 클릭 순간 Claude를 띄워야 해서 기다리지 않는다.
     private func makeTerminal(sizeHint: NSSize? = nil, noScreen: Bool = false) -> GhosttyTerminalView {
         cancelReconnectTimer()
-        if kind == .quick {
-            workingDirectory = QuickSessionPolicy.ensureWorkingDirectory()
-        }
         let startDir = FileManager.default.fileExists(atPath: workingDirectory)
             ? workingDirectory : NSHomeDirectory()
         let launch = Self.ghosttyLaunch(
@@ -168,7 +125,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
             environment: launchEnvironment(),
             workingDirectory: startDir)
         let hint = sizeHint.flatMap { $0.width > 0 && $0.height > 0 ? $0 : nil }
-        let view = GhosttyTerminalView(launch: launch, theme: palette.ghosttyTheme, startWhenSized: kind != .quick, initialSize: hint)
+        let view = GhosttyTerminalView(launch: launch, theme: palette.ghosttyTheme, startWhenSized: true, initialSize: hint)
         view.translatesAutoresizingMaskIntoConstraints = false
         let launchedAt = Date()
         view.onExit = { [weak self, weak view] code in
@@ -182,31 +139,26 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         } else {
             startError = nil
             isRunning = true
-            if kind == .quick { beginQuickTitleUpdates(view: view) }
         }
         return view
     }
 
     private func launchArguments(startDirectory: String, noScreen: Bool = false) -> [String] {
-        if kind == .shell, let command = attachment.command(recordingExitTo: exitStatusPath, noScreen: noScreen) {
+        Self.launchArguments(attachment: attachment, remoteHost: remoteHost, workingDirectory: workingDirectory,
+                             exitStatusPath: exitStatusPath, noScreen: noScreen)
+    }
+
+    /// 로그인 셸 인자: 세션 패널은 `sm-session attach`, 원격 셸 패널은 ssh 한 줄, 로컬 셸 패널은 그냥 로그인 셸.
+    static func launchArguments(attachment: TerminalAttachment, remoteHost: String?, workingDirectory: String,
+                                exitStatusPath: String? = nil, noScreen: Bool = false) -> [String] {
+        if let command = attachment.command(recordingExitTo: exitStatusPath, noScreen: noScreen) {
             return ["-lc", command]
         }
-        let arguments = Self.launchArguments(
-            kind: kind,
-            tmuxSessionName: tmuxSessionName,
-            workingDirectory: startDirectory,
-            remoteHost: remoteHost,
-            // 원격 디렉토리는 폴백 전 원래 경로에서 계산한다 — 로컬에 없어도 원격엔 있다.
-            remoteDirectory: TmuxBootstrap.remoteDirectory(forLocalPath: workingDirectory),
-            quickLaunch: quickLaunch,
-            quickConfiguration: quickConfiguration,
-            sshErrorLog: sshErrorLogPath
-        )
-        // 원격 tmux 탭도 끊긴 ssh(255)일 때 다시 붙는다 — 그 코드를 login이 삼키지 않게 적어 둔다.
-        if kind == .tmuxMain || kind == .tmuxExtra, remoteHost?.isEmpty == false, arguments.count == 2, arguments[0] == "-lc" {
-            return ["-lc", TerminalAttachment.recordingExit(arguments[1], to: exitStatusPath)]
+        if let remoteHost, !remoteHost.trimmingCharacters(in: .whitespaces).isEmpty {
+            // 원격 디렉토리는 원래 경로에서 계산한다 — 로컬에 없어도 원격엔 있다.
+            return ["-lc", RemoteShell.shellCommand(host: remoteHost, directory: RemoteShell.directory(forLocalPath: workingDirectory))]
         }
-        return arguments
+        return []   // 순수 인터랙티브 로그인 셸
     }
 
     /// 앱 환경에서 바꿀 것만(더할 값, 지울 이름). TERM·COLORTERM은 Ghostty 설정이 준다.
@@ -215,16 +167,9 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         var env = base
         // 사용자 셸의 PATH — 앱이 Finder로 떠도 패널 안에서 ccv·sm-session 같은 사용자 명령을 찾는다.
         env["PATH"] = UserShellEnvironment.path
-        // peer가 이 터미널의 에이전트를 sm 패널(`sm:<UUID>`)로 찾는 고리. tmux 탭에는 넣지 않는다 —
-        // 새로 뜨는 tmux 서버가 전역 환경으로 물려받아 모든 패널이 이 탭을 자기 것이라 주장한다.
-        if kind == .shell {
-            env["SM_PANE_ID"] = layoutPane?.id ?? id.uuidString
-            if let workspace = layoutPane?.workspace { env["SM_WORKSPACE"] = workspace }
-        }
-        if kind == .quick {
-            env = QuickSessionPolicy.applyingEnvironment(env, launch: quickLaunch ?? .blank,
-                                                         configuration: quickConfiguration)
-        }
+        // peer가 이 터미널의 에이전트를 sm 패널(`sm:<UUID>`)로 찾는 고리.
+        env["SM_PANE_ID"] = layoutPane?.id ?? id.uuidString
+        if let workspace = layoutPane?.workspace { env["SM_WORKSPACE"] = workspace }
         let set = env.filter { base[$0.key] != $0.value }
         let unset = base.keys.filter { env[$0] == nil }.sorted()
         return (set, unset)
@@ -245,76 +190,6 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         }
         let command = words.isEmpty ? nil : words.map(TerminalAttachment.quote).joined(separator: " ")
         return .init(command: command, workingDirectory: workingDirectory, environment: environment.set)
-    }
-
-    /// Quick 탭 제목. 표면의 앞 프로세스(claude)의 pid로 대화 id를 찾는다 — Claude가 등록부를
-    /// 쓰기까지 잠깐 걸리므로 1초마다 다시 본다.
-    private func beginQuickTitleUpdates(view: GhosttyTerminalView) {
-        let scanner = QuickConversationScanner.shared
-        if isTrackingQuickTitle { scanner.untrack(owner: id) }
-        isTrackingQuickTitle = false
-        if quickLaunch?.resumeSessionId == nil {
-            quickSessionId = nil
-            name = initialName
-        }
-        quickTitleCancellable = scanner.$aiTitlesBySessionId
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] titles in
-                self?.updateQuickTitle(titlesBySessionId: titles)
-            }
-        scanner.start()
-        trackQuickTitle()
-        scanner.rescan()
-
-        guard quickSessionId == nil else { return }
-        quickIdentityTimer?.invalidate()
-        quickIdentityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self, weak view] timer in
-            guard let self, let view, self.isRunning else {
-                timer.invalidate()
-                return
-            }
-            // 맥에서 표면의 직속 자식은 login(1)이고 claude는 그 아래 같은 그룹에 있다 — 앞 그룹을 훑어
-            // 등록부(~/.claude/sessions/<pid>.json)를 쓴 pid를 찾는다(10/31 실측: 앞 그룹 리더는 login).
-            if let leader = view.foregroundProcessIdentifier {
-                for pid in ProcessGroup.members(of: leader) where self.quickSessionId == nil {
-                    self.resolveQuickSessionId(processIdentifier: pid)
-                }
-            }
-            if self.quickSessionId != nil {
-                timer.invalidate()
-                self.quickIdentityTimer = nil
-            }
-        }
-    }
-
-    private func resolveQuickSessionId(processIdentifier: pid_t) {
-        guard quickSessionId == nil,
-              let sessionId = QuickSessionTitleResolver.sessionId(
-                processIdentifier: processIdentifier
-              ) else { return }
-        quickSessionId = sessionId
-        trackQuickTitle()
-        updateQuickTitle(
-            titlesBySessionId: QuickConversationScanner.shared.aiTitlesBySessionId
-        )
-        QuickConversationScanner.shared.rescan()
-    }
-
-    private func trackQuickTitle() {
-        guard let quickSessionId else { return }
-        QuickConversationScanner.shared.track(sessionID: quickSessionId, owner: id)
-        isTrackingQuickTitle = true
-    }
-
-    func updateQuickTitle(titlesBySessionId: [String: String]) {
-        guard kind == .quick,
-              let quickSessionId,
-              let title = titlesBySessionId[quickSessionId] else { return }
-        name = title
-    }
-
-    func matchesQuickConversation(sessionId: String) -> Bool {
-        kind == .quick && quickSessionId == sessionId
     }
 
     /// 죽은 탭 재시작 (프로세스 종료·시작 실패 후 재시도)
@@ -384,19 +259,16 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         handleExit(exitCode: code, connectedFor: connectedFor)
     }
 
-    /// PTY 종료 처리. 원격 tmux의 비정상 종료만 재연결하고, 그 동안 터미널 화면은
-    /// 끊기기 전 마지막 프레임을 유지한다 (오류 화면으로 바꾸지 않는다).
+    /// PTY 종료 처리. 세션 패널의 attach만 다시 붙이고, 그 동안 터미널 화면은
+    /// 끊기기 전 마지막 프레임을 유지한다 (오류 화면으로 바꾸지 않는다). 셸 패널은 끝난 대로 둔다.
     func handleExit(exitCode: Int32, connectedFor: TimeInterval) {
-        guard let delay = RemoteReconnectPolicy.delay(kind: kind, remoteHost: remoteHost,
-            exitCode: exitCode, attempt: reconnectAttempt, connectedFor: connectedFor,
-            agentPane: attachesAgent) else {
-            // detach(0)처럼 의도된 종료는 재시도 배지를 남기지 않는다.
+        guard attachesAgent else {
             isReconnecting = false
             return
         }
+        let delay = ReconnectPolicy.delay(attempt: reconnectAttempt, connectedFor: connectedFor)
         if connectedFor >= 30 { reconnectAttempt = 0 }
         reconnectAttempt += 1
-        lastConnectionFailure = Self.lastLogLine(at: sshErrorLogPath) ?? lastConnectionFailure
         isReconnecting = true
         reconnectTimer?.invalidate()
         reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
@@ -489,7 +361,6 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
     func connectionResumed() {
         guard isReconnecting else { return }
         isReconnecting = false
-        lastConnectionFailure = nil
     }
 
     var acceptsInput: Bool { !isReconnecting }
@@ -499,17 +370,7 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         reconnectTimer = nil
     }
 
-    /// ssh 로그의 마지막 비어 있지 않은 줄. 접속마다 `2>`로 새로 쓰므로 직전 시도의 원인이다.
-    static func lastLogLine(at path: String) -> String? {
-        guard let data = FileManager.default.contents(atPath: path),
-              let text = String(data: data.suffix(4096), encoding: .utf8) ?? String(data: data.suffix(4096), encoding: .isoLatin1) else { return nil }
-        let line = text.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .last { !$0.isEmpty }
-        return line.map { String($0.prefix(240)) }
-    }
-
-    /// CLI도 화면 선택과 같은 경로로 죽은 연결을 복구한다. 실행 중인 tmux는 건드리지 않는다.
+    /// 죽은 연결을 복구한다. 살아 있는 세션은 건드리지 않는다.
     func reconnectIfNeeded() {
         if let stageDirectorStorage, stageIsActive {
             MainActor.assumeIsolated { stageDirectorStorage.reconnectNow() }
@@ -517,15 +378,6 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         }
         _ = getOrCreateTerminal()
         restartIfDead()
-    }
-
-    func retargeted(to host: String?) -> TerminalSession {
-        // 셸 탭 이름은 실행 위치를 말한다 ("zsh" / "shell@arch"). 위치가 바뀌면 함께 바꾼다.
-        let retargetedName = kind == .shell && name == Self.defaultShellName(remoteHost: remoteHost)
-            ? Self.defaultShellName(remoteHost: host) : name
-        return TerminalSession(id: id, kind: kind, name: retargetedName, workingDirectory: workingDirectory,
-                               tmuxSessionName: tmuxSessionName, remoteHost: host,
-                               quickLaunch: quickLaunch, quickConfiguration: quickConfiguration)
     }
 
     static func defaultShellName(remoteHost: String?) -> String {
@@ -554,23 +406,11 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         stopWatchingInputForNotice()
         cancelReconnectTimer()
         isReconnecting = false
-        try? FileManager.default.removeItem(atPath: sshErrorLogPath)
         try? FileManager.default.removeItem(atPath: exitStatusPath)
-        if isTrackingQuickTitle { QuickConversationScanner.shared.untrack(owner: id) }
-        isTrackingQuickTitle = false
-        quickIdentityTimer?.invalidate()
-        quickIdentityTimer = nil
-        quickTitleCancellable = nil
         pendingTimer?.invalidate()
         pendingView?.terminate()
         pendingView = nil
-        // Quick 탭은 claude를 표면에서 직접 띄운다. claude는 SIGHUP·SIGTERM을 무시해서, 표면만 닫으면 PTY 없이
-        // 살아남는다(GhosttyTerminal 시험) — 유예 뒤 SIGKILL로 정리한다. 다른 탭(attach·셸)은 보통 터미널처럼 HUP만.
-        if kind == .quick {
-            terminalView?.terminate(reapingAfter: 3)
-        } else {
-            terminalView?.terminate()
-        }
+        terminalView?.terminate()
         terminalView?.removeFromSuperview()
         terminalView = nil
     }
@@ -580,105 +420,23 @@ final class TerminalSession: Identifiable, ObservableObject, Equatable {
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
         reconnectTimer?.invalidate()
         pendingTimer?.invalidate()
-        try? FileManager.default.removeItem(atPath: sshErrorLogPath)
         try? FileManager.default.removeItem(atPath: exitStatusPath)
-        quickIdentityTimer?.invalidate()
-        if isTrackingQuickTitle { QuickConversationScanner.shared.untrack(owner: id) }
     }
 
     static func == (lhs: TerminalSession, rhs: TerminalSession) -> Bool {
         lhs.id == rhs.id
     }
-
-    /// PTY 실행 정책을 순수 함수로 분리해 Quick이 TmuxBootstrap을 절대 거치지
-    /// 않는다는 경계를 테스트할 수 있게 한다.
-    static func launchArguments(
-        kind: TabKind,
-        tmuxSessionName: String?,
-        workingDirectory: String,
-        remoteHost: String? = nil,
-        remoteDirectory: TmuxBootstrap.RemoteDirectory? = nil,
-        quickLaunch: QuickLaunch? = nil,
-        quickConfiguration: QuickSessionConfiguration = .default,
-        sshErrorLog: String? = nil
-    ) -> [String] {
-        if kind == .quick {
-            return ["-lc", QuickSessionPolicy.launchCommand(
-                for: quickLaunch ?? .blank,
-                configuration: quickConfiguration
-            )]
-        }
-        // 원격: 로컬 셸은 ssh만 exec한다. tmux 콜드부트 판단은 원격 스크립트가 한다.
-        if let remoteHost, !remoteHost.trimmingCharacters(in: .whitespaces).isEmpty {
-            let dir = remoteDirectory ?? TmuxBootstrap.remoteDirectory(forLocalPath: workingDirectory)
-            if let tmuxSessionName {
-                let script = TmuxBootstrap.remoteStartupScript(sessionName: tmuxSessionName, remoteDirectory: dir)
-                return ["-lc", TmuxBootstrap.remoteLaunchCommand(host: remoteHost, remoteScript: script, errorLog: sshErrorLog)]
-            }
-            return ["-lc", TmuxBootstrap.remoteShellCommand(host: remoteHost, remoteDirectory: dir)]
-        }
-        if let tmuxSessionName {
-            return ["-lc", TmuxBootstrap.startupScript(
-                sessionName: tmuxSessionName,
-                workingDirectory: workingDirectory
-            )]
-        }
-        return []   // 순수 인터랙티브 로그인 셸
-    }
 }
 
-/// Only a persistent remote attachment is retried. A deliberate detach (0),
-/// a shell exit or a Quick conversation must stay closed. Cap retries while a host sleeps.
-///
 /// A pane showing a session-layer session (`sm-session attach NAME@HOST`) is attached again whenever its
 /// attach ends, whatever the code. The attach itself no longer ends when the session stops or sleeps: it
-/// keeps the last screen and waits for a key in that pane (11/01, harness-w1-2). So an attach that ended
+/// keeps the last screen and waits for a key in that pane (11/01). So an attach that ended
 /// was cut from outside — ssh dropped while the Mac slept, the process was killed when SEOL shut sessions
 /// down for quota — and the pane would otherwise stay dead. Attaching again never starts the session by
 /// itself, so this cannot spend quota. A closed pane is not retried (cleanup stops it first).
-enum RemoteReconnectPolicy {
-    static func delay(kind: TabKind, remoteHost: String?, exitCode: Int32,
-                      attempt: Int, connectedFor: TimeInterval, agentPane: Bool = false) -> TimeInterval? {
-        if agentPane {
-            return min(30, 3 * pow(2, Double(connectedFor >= 30 ? 0 : min(4, max(0, attempt)))))
-        }
-        guard kind == .tmuxMain || kind == .tmuxExtra,
-              let remoteHost, !remoteHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              exitCode != 0 else { return nil }
-        let failures = connectedFor >= 30 ? 0 : min(4, max(0, attempt))
-        return min(30, 3 * pow(2, Double(failures)))
-    }
-}
-
-/// PTY io 큐에서만 만지는 일회성 플래그 — 첫 출력에서 한 번만 메인으로 알린다.
-private final class FirstOutputLatch {
-    private var fired = false
-    func fire() -> Bool {
-        guard !fired else { return false }
-        fired = true
-        return true
-    }
-}
-
-private extension QuickLaunch {
-    var resumeSessionId: String? {
-        guard case .resume(let sessionId) = self else { return nil }
-        return sessionId
-    }
-}
-
-extension TerminalSession {
-    convenience init(snapshot: TabSnapshot) {
-        self.init(id: snapshot.id, kind: snapshot.kind, name: snapshot.name,
-                  workingDirectory: snapshot.workingDirectory,
-                  tmuxSessionName: snapshot.tmuxSessionName,
-                  remoteHost: snapshot.remoteHost)
-    }
-
-    func snapshot() -> TabSnapshot {
-        TabSnapshot(id: id, kind: kind, name: name,
-                    workingDirectory: workingDirectory,
-                    tmuxSessionName: tmuxSessionName,
-                    remoteHost: remoteHost)
+/// Retries back off while a host sleeps.
+enum ReconnectPolicy {
+    static func delay(attempt: Int, connectedFor: TimeInterval) -> TimeInterval {
+        min(30, 3 * pow(2, Double(connectedFor >= 30 ? 0 : min(4, max(0, attempt)))))
     }
 }

@@ -17,7 +17,7 @@ struct AgentPickerView: View {
 
     @State private var engine: AgentEngine
     @State private var modelID: String
-    @State private var effort: QuickEffort
+    @State private var effort: AgentEffort
     @State private var name: String
     @State private var nameEdited = false
     @FocusState private var nameFocused: Bool
@@ -71,7 +71,7 @@ struct AgentPickerView: View {
                         }
                         FieldLabel("effort")
                         PlainMenu(title: effort.displayName) {
-                            ForEach(model?.efforts ?? QuickEffort.allCases) { level in
+                            ForEach(model?.efforts ?? AgentEffort.allCases) { level in
                                 Button(level.displayName) { effort = level }
                             }
                         }
@@ -186,14 +186,14 @@ enum AgentEngine: String, CaseIterable, Identifiable, Codable {
 struct AgentModelChoice: Identifiable, Equatable {
     let id: String
     let name: String
-    let efforts: [QuickEffort]
-    var defaultEffort: QuickEffort?
+    let efforts: [AgentEffort]
+    var defaultEffort: AgentEffort?
 }
 
 struct AgentLaunchSpec: Equatable {
     let engine: AgentEngine
     let modelID: String
-    let effort: QuickEffort
+    let effort: AgentEffort
     let name: String
 }
 
@@ -213,7 +213,7 @@ struct AgentPickerSession: Identifiable, Equatable {
 struct AgentPickerDefaults: Codable, Equatable {
     var engine: AgentEngine
     var modelID: String
-    var effort: QuickEffort
+    var effort: AgentEffort
 
     private static let key = "agentPicker.last"
 

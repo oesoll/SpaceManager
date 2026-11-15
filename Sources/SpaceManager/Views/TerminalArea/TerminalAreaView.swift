@@ -1,350 +1,171 @@
 import SwiftUI
 
-/// Right pane containing the selected terminal.
-/// 탭 전환 UI는 사이드바의 워크스페이스 폴더링(WorkspaceTabRow)이 담당한다.
+/// 사이드바 오른쪽: 고른 워크스페이스의 탭(패널 카드들)이 창 아래 끝까지 내려오고, 아래 두 노치에 탭 칩과
+/// 다른 탭에 있는 에이전트 묶음이 선다(`BottomNotch`). 미리보기는 오른쪽 노치에서 위로 뜬다.
 struct TerminalAreaView: View {
     @EnvironmentObject var appState: AppState
+    @ObservedObject private var layouts = LayoutDirectory.shared
+    @ObservedObject private var peers = PeerDirectory.shared
+    @StateObject private var preview = AgentPreview()
+    @State private var notch = BottomNotch.none
+    /// 탭을 고른 순간(파일이 따라잡기 전) 묶음도 바로 바뀌게 화면 쪽 상태를 따라 다시 그린다.
+    @State private var interactionTick = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// 노치 안쪽 여백. 왼쪽은 칩이 카드 세로줄에 가깝게, 오른쪽은 노치 곡선에서 숨 쉴 만큼.
+    static let leadingInset: CGFloat = 4
+    static let trailingInset: CGFloat = 10
+
+    private var layoutKey: String? {
+        appState.selectedWorkspace.map { appState.layoutKey(for: $0) }
+    }
+
+    /// 지금 탭 말고 다른 탭(그리고 확대에 가려진 패널)의 세션. 배치와 peer만으로 계산한다.
+    private var shelfAgents: [ShelfAgent] {
+        _ = interactionTick
+        guard let workspace = appState.selectedWorkspace,
+              let layout = layouts.layouts[appState.layoutKey(for: workspace)] else { return [] }
+        return appState.hiddenAgents(in: layout, directory: peers)
+    }
+
+    /// 노치 폭, 칩과 묶음이 바뀌는 움직임. 위 화면의 탭·워크스페이스 전환과 같은 스프링이라 한 몸으로 움직인다.
+    private var resize: Animation? {
+        reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 1.0)
+    }
+
+    /// 워크스페이스가 바뀔 때 칩이 들어오는 쪽: 위 화면처럼 사이드바에서 아래면 아래에서, 위면 위에서.
+    @State private var lastWorkspaceIndex = 0
+    private var workspaceIndex: Int {
+        appState.workspaces.firstIndex { $0.id == appState.selectedWorkspace?.id } ?? 0
+    }
+    private var chipsEnter: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        let dy: CGFloat = workspaceIndex >= lastWorkspaceIndex ? 8 : -8
+        return .asymmetric(insertion: .offset(y: dy).combined(with: .opacity),
+                           removal: .opacity.animation(.easeOut(duration: 0.1)))
+    }
+    /// 처음 잰 폭은 움직이지 않고 바로 둔다(창이 뜰 때 노치가 자라나지 않게).
+    @State private var measured = (left: false, right: false)
 
     var body: some View {
-        VStack(spacing: 0) {
-            if appState.windowKind == .workspace && !TmuxBootstrap.isTmuxAvailable {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundColor(.orange)
-                    Text("tmux가 설치되어 있지 않아 셸 탭만 사용할 수 있습니다 — `brew install tmux` 후 재실행")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
+        GeometryReader { proxy in
+            let size = proxy.size
+            let band = BottomNotch.height + ContentView.cardGap
+            ZStack(alignment: .topLeading) {
+                // 카드 바탕·테두리는 TabSurfaceView가 그린다 — 탭을 나누면 카드가 여럿이 된다. 카드는 노치 자리를 파낸다.
+                TabSurfaceView()
+                    .environment(\.bottomNotch, notch)
+                    .frame(width: size.width, height: size.height)
+
+                // 노치 자리를 바탕색으로 한 번 더 덮는다 — 터미널 표면(AppKit)이 클립 밖에 그리거나 그 자리의 클릭을
+                // 받지 않게. 모양 안만 클릭을 받는다.
+                ZStack {
+                    NotchFillShape(side: .left, width: notch.left, below: ContentView.cardGap)
+                    NotchFillShape(side: .right, width: notch.right, below: ContentView.cardGap)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.orange.opacity(0.1))
-            }
-            // 카드 바탕·테두리는 TabSurfaceView가 그린다 — 탭을 나누면 카드가 여럿이 된다.
-            TabSurfaceView()
-            if appState.windowKind == .workspace {
-                // 탭은 tmux 상태줄이 있던 자리(아래 왼쪽)에서 오간다.
-                TabStripBar(layouts: .shared, peers: .shared, interaction: appState.layoutInteraction)
-                    .padding(.top, 6)
-            }
-        }
-    }
-}
+                .foregroundStyle(Color(Chrome.canvas))
+                .frame(width: size.width, height: size.height + ContentView.cardGap)
 
-/// Single terminal view for the selected session
-struct SingleTerminalView: View {
-    @EnvironmentObject var appState: AppState
-
-    var body: some View {
-        if let session = appState.selectedSession {
-            SessionContentView(session: session)
-        } else if appState.windowKind == .quick {
-            QuickHomeView()
-        } else {
-            VStack(spacing: 10) {
-                Text("열린 터미널이 없습니다")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color(Chrome.textTertiary))
-                Button("새 터미널") {
-                    appState.addDefaultTab()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-}
-
-/// 활성 대화가 없을 때 보이는 Hermes 홈. 프롬프트는 AppState를 거쳐 PTY 환경변수로
-/// 전달되며 셸 명령 문자열에는 절대 보간되지 않는다.
-struct QuickHomeView: View {
-    @EnvironmentObject private var appState: AppState
-    @StateObject private var modelCatalog = QuickModelCatalog()
-    @State private var prompt = ""
-    @State private var selectedModelID: String
-    @State private var selectedEffort: QuickEffort
-    @State private var proxyEnabled: Bool
-    @FocusState private var isPromptFocused: Bool
-
-    init() {
-        let saved = QuickComposerPreferences.load()
-        _selectedModelID = State(initialValue: saved.modelID)
-        _selectedEffort = State(initialValue: saved.effort)
-        _proxyEnabled = State(initialValue: saved.proxyEnabled)
-    }
-
-    var body: some View {
-        VStack(spacing: 28) {
-            // 장식 아이콘 없이 글자 위계만으로 선다 — Fine 홈과 같은 서체·자간.
-            VStack(spacing: 10) {
-                Text("새 대화 시작")
-                    .font(HomeFont.greeting(31))
-                    .tracking(-1.0)
-                    .foregroundColor(.primary)
-                Text("무엇을 도와드릴까요?")
-                    .font(HomeFont.note)
-                    .tracking(0.1)
-                    .foregroundColor(.secondary.opacity(0.85))
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
+                // 왼쪽 노치: 탭 칩. 오른쪽 노치 몫을 남기고 그보다 길면 옆으로 민다. 워크스페이스가 바뀌면 칩 묶음이
+                // 통째로 바뀐다 — 떠나는 칩은 빨리 흐려지고, 새 칩은 위 화면과 같은 쪽에서 들어온다.
                 ZStack(alignment: .topLeading) {
-                    if prompt.isEmpty {
-                        Text("무엇이든 물어보세요")
-                            .font(HomeFont.prompt)
-                            .foregroundColor(Color.secondary.opacity(0.6))
-                            .padding(.top, 2)
-                            .padding(.leading, 4)
-                            .allowsHitTesting(false)
-                    }
-
-                    TextField("", text: $prompt, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(HomeFont.prompt)
-                        .lineSpacing(4)
-                        .lineLimit(3...10)
-                        .focused($isPromptFocused)
-                        .onSubmit(submit)
-                        .padding(.horizontal, 4)
+                    TabStripBar(layouts: .shared, peers: .shared, interaction: appState.layoutInteraction,
+                                maxWidth: max(120, size.width - notch.right - 160))
+                        .padding(.leading, Self.leadingInset)
+                        .padding(.trailing, Self.trailingInset)
+                        .frame(height: band)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                            let next = appState.selectedLayout == nil ? 0 : width
+                            guard next != notch.left else { return }
+                            if measured.left || next == 0 {
+                                withAnimation(resize) { notch.left = next }
+                            } else {
+                                notch.left = next
+                            }
+                            if next > 0 { measured.left = true }
+                        }
+                        .id(layoutKey ?? "")
+                        .transition(chipsEnter)
                 }
-                .frame(minHeight: 56, alignment: .topLeading)
+                .animation(resize ?? .easeOut(duration: 0.15), value: layoutKey)
+                .offset(y: size.height - BottomNotch.height)
 
-                HStack(spacing: 10) {
-                    modelPicker
-                    effortPicker
-                    proxyButton
-
-                    Spacer()
-
-                    // Fine의 보내기 버튼: 둥근 사각형, 쓸 수 있을 때만 짙은 솔잎색.
-                    Button(action: submit) {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(trimmedPrompt.isEmpty ? Color.secondary : Color.white)
-                            .frame(width: 30, height: 30)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(trimmedPrompt.isEmpty
-                                          ? Color.black.opacity(0.05)
-                                          : Color(red: 0.22, green: 0.27, blue: 0.23))
-                            )
-                            .animation(.spring(response: 0.25, dampingFraction: 1), value: trimmedPrompt.isEmpty)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(trimmedPrompt.isEmpty)
-                }
-
-                Text(sessionModeDescription)
-                    .font(HomeFont.caption)
-                    .foregroundColor(.secondary.opacity(0.75))
-                    .lineLimit(1)
-            }
-            .padding(20)
-            // 테두리는 머리카락 한 올, 그림자는 바탕색 쪽으로 기운 아주 옅은 한 겹 —
-            // 회색 테두리와 짙은 이중 그림자는 카드를 무겁게 들어 올렸다.
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color(nsColor: .textBackgroundColor))
-                    .shadow(color: Color(red: 0.27, green: 0.30, blue: 0.26).opacity(0.08), radius: 24, y: 10)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(Color.black.opacity(0.07), lineWidth: 1)
-            )
-        }
-        .frame(maxWidth: 640)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(32)
-        .onAppear {
-            isPromptFocused = true
-            modelCatalog.refresh()
-        }
-        .onChange(of: selectedModelID) { _, modelID in
-            if modelID.hasPrefix("claude-codex-") {
-                proxyEnabled = true
-            }
-            constrainSelectedEffort()
-            persistSelection()
-        }
-        .onChange(of: selectedEffort) {
-            persistSelection()
-        }
-        .onChange(of: proxyEnabled) {
-            persistSelection()
-        }
-        .onChange(of: modelCatalog.models) { _, models in
-            let resolved = QuickComposerPreferences.resolved(
-                currentConfiguration,
-                availableModels: models
-            )
-            selectedModelID = resolved.modelID
-            selectedEffort = resolved.effort
-            proxyEnabled = resolved.proxyEnabled
-            QuickComposerPreferences.save(resolved)
-        }
-    }
-
-    private var trimmedPrompt: String {
-        prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func submit() {
-        let initialPrompt = trimmedPrompt
-        guard !initialPrompt.isEmpty else { return }
-        prompt = ""
-        appState.addQuickSession(
-            initialPrompt: initialPrompt,
-            configuration: QuickSessionConfiguration(
-                modelID: selectedModelID,
-                effort: selectedEffort,
-                proxyEnabled: proxyEnabled
-            )
-        )
-    }
-
-    private var selectedModel: QuickModelOption {
-        modelCatalog.models.first(where: { $0.id == selectedModelID })
-            ?? QuickModelCatalog.fallbackModels[1]
-    }
-
-    private var modelPicker: some View {
-        Menu {
-            Section("Claude") {
-                ForEach(modelCatalog.models.filter { !$0.isCodex }) { model in
-                    modelButton(model)
-                }
-            }
-            let codexModels = modelCatalog.models.filter(\.isCodex)
-            if !codexModels.isEmpty {
-                Section("Codex · 프록시") {
-                    ForEach(codexModels) { model in
-                        modelButton(model)
+                // 오른쪽 노치: 다른 탭에 있는 에이전트 묶음. 없으면 노치도 없다.
+                // 생길 때는 노치가 오른쪽 끝에서 열리며 로고가 따라 나오고, 사라질 때는 로고가 먼저 흐려진 뒤 노치가 닫힌다.
+                ZStack(alignment: .trailing) {
+                    if !shelfAgents.isEmpty {
+                        AgentShelf(agents: shelfAgents) { agent in openPreview(agent) }
+                            .fixedSize()
+                            .frame(height: band)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                                guard width != notch.right else { return }
+                                withAnimation(resize) { notch.right = width }
+                            }
+                            // 워크스페이스를 바꿀 때는 새 묶음이 먼저 폭을 잴 수 있다 — 정말 비었을 때만 닫는다.
+                            .onDisappear { if shelfAgents.isEmpty { withAnimation(resize) { notch.right = 0 } } }
+                            .id(layoutKey ?? "")
+                            .transition(reduceMotion ? .opacity
+                                        : .asymmetric(insertion: .offset(x: 10).combined(with: .opacity),
+                                                      removal: .opacity.animation(.easeOut(duration: 0.1))))
                     }
                 }
-            }
-        } label: {
-            pickerLabel(selectedModel.displayName, icon: "sparkle")
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(modelCatalog.routerAvailable ? "대화 모델 선택" : "라우터 오프라인 — Claude 모델만 사용 가능")
-    }
+                .frame(width: size.width, height: band, alignment: .trailing)
+                .animation(resize ?? .easeOut(duration: 0.15), value: shelfAgents.isEmpty)
+                .animation(resize ?? .easeOut(duration: 0.15), value: layoutKey)
+                .offset(y: size.height - BottomNotch.height)
 
-    private var effortPicker: some View {
-        Menu {
-            ForEach(selectedModel.supportedEfforts) { effort in
-                Button {
-                    selectedEffort = effort
-                } label: {
-                    if selectedEffort == effort {
-                        Label(effort.displayName, systemImage: "checkmark")
-                    } else {
-                        Text(effort.displayName)
-                    }
+                // 미리보기: 오른쪽 노치 위에 뜬다(노치가 원점 — 닫으면 그리로 돌아간다).
+                if let agent = preview.agent, let session = preview.session {
+                    let width = min(860, max(420, size.width * 0.62))
+                    let height = min(600, max(280, size.height * 0.62))
+                    AgentPreviewCard(agent: agent, session: session,
+                                     attention: shelfAgents.first { $0.id == agent.id }?.attention ?? agent.attention,
+                                     onGoToTab: { goToTab(agent) },
+                                     onClose: closePreview)
+                        .frame(width: width, height: height)
+                        .offset(x: size.width - width - 4, y: size.height - BottomNotch.height - height - 8)
+                        .transition(reduceMotion ? .opacity
+                                    : .scale(scale: 0.96, anchor: .bottomTrailing).combined(with: .opacity))
+                        .zIndex(5)
                 }
             }
-        } label: {
-            pickerLabel(selectedEffort.displayName, icon: "dial.medium")
+            .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.32, dampingFraction: 1.0),
+                       value: preview.agent?.id)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("응답 생성 effort")
+        .onChange(of: layoutKey) { _, _ in closePreview() }
+        .onChange(of: appState.selectedWorkspace?.id) { _, _ in
+            // 다음 전환의 방향을 정할 기준(이번 전환의 칩은 이미 그려졌다).
+            DispatchQueue.main.async { lastWorkspaceIndex = workspaceIndex }
+        }
+        .onReceive(appState.layoutInteraction.objectWillChange) { _ in
+            DispatchQueue.main.async { interactionTick &+= 1 }
+        }
+        // 미리보던 세션의 탭으로 갔거나 그 패널이 사라지면 미리보기는 할 일이 끝났다.
+        .onChange(of: shelfAgents.map(\.id)) { _, ids in
+            if let agent = preview.agent, !ids.contains(agent.id) { closePreview() }
+        }
+        .onDisappear { preview.close() }
     }
 
-    private func modelButton(_ model: QuickModelOption) -> some View {
-        Button {
-            selectedModelID = model.id
-        } label: {
-            if selectedModelID == model.id {
-                Label(model.displayName, systemImage: "checkmark")
-            } else {
-                Text(model.displayName)
-            }
+    /// 도는 세션은 미리보기, 쉬는(잠든) 세션은 그 탭으로 — 붙으면 깨어나므로 미리보기로 깨우지 않는다.
+    private func openPreview(_ agent: ShelfAgent) {
+        guard let workspace = appState.selectedWorkspace else { return }
+        if agent.isRunning {
+            preview.open(agent, workingDirectory: workspace.rootPath)
+        } else {
+            goToTab(agent)
         }
     }
 
-    private func constrainSelectedEffort() {
-        let efforts = selectedModel.supportedEfforts
-        guard !efforts.contains(selectedEffort) else { return }
-        selectedEffort = efforts.contains(.high) ? .high : (efforts.first ?? .high)
+    private func closePreview() {
+        preview.close()
     }
 
-    private var currentConfiguration: QuickSessionConfiguration {
-        QuickSessionConfiguration(
-            modelID: selectedModelID,
-            effort: selectedEffort,
-            proxyEnabled: proxyEnabled
-        )
-    }
-
-    private func persistSelection() {
-        QuickComposerPreferences.save(currentConfiguration)
-    }
-
-    private var proxyButton: some View {
-        let isCodex = selectedModel.isCodex
-        return Button {
-            guard modelCatalog.routerAvailable, !isCodex else { return }
-            proxyEnabled.toggle()
-        } label: {
-            Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(proxyEnabled ? .primary : .secondary.opacity(0.72))
-                .frame(width: 30, height: 30)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Color.black.opacity(proxyEnabled ? 0.10 : 0.05))
-                )
-        }
-        .buttonStyle(.plain)
-        .disabled(!modelCatalog.routerAvailable || isCodex)
-        .help(isCodex ? "Codex 모델은 프록시 세션이 필수입니다" : "세션 내 Claude↔Codex 전환 허용")
-    }
-
-    /// Fine의 컨트롤 알약 — 모델·effort·프록시가 같은 높이·라운딩·바탕을 쓴다.
-    /// `.borderlessButton` 메뉴는 라벨 배경을 지우므로 메뉴는 `.button` + plain으로 그린다.
-    private func pickerLabel(_ title: String, icon: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundColor(.secondary.opacity(0.65))
-        }
-        .foregroundColor(.primary.opacity(0.75))
-        .padding(.horizontal, 9)
-        .frame(height: 30)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.black.opacity(0.05))
-        )
-        .contentShape(Rectangle())
-    }
-
-    private var sessionModeDescription: String {
-        if modelCatalog.isLoading {
-            return "모델 목록 확인 중"
-        }
-        if !modelCatalog.routerAvailable {
-            return "라우터 오프라인 · Claude 직결만 사용 가능"
-        }
-        if selectedModel.isCodex || proxyEnabled {
-            return "프록시 세션 · /model에서 Claude↔Codex 전환 가능"
-        }
-        return "Claude 직결 · 세션 안에서 Codex 전환 불가"
-    }
-}
-
-struct SessionContentView: View {
-    @ObservedObject var session: TerminalSession
-
-    var body: some View {
-        AgentTerminalView(session: session)
+    /// 그 세션이 있는 탭으로 가서 그 패널에 포커스(확대 중이었으면 세션 층이 그 탭을 앞에 둔다).
+    private func goToTab(_ agent: ShelfAgent) {
+        guard let layout = appState.selectedLayout else { return }
+        closePreview()
+        appState.focusLayoutPane(agent.pane, in: layout)
     }
 }

@@ -119,15 +119,6 @@ final class PeerDirectoryTests: XCTestCase {
         XCTAssertEqual(directory.agents.first?.isStale, false)
     }
 
-    func testPaneMatchingUsesTheSmTarget() throws {
-        let directory = PeerDirectory(command: [], localHost: "mac")
-        let listing = try PeerListing.decode(Data(sample.utf8))
-        directory.apply(listing)
-        let pane = try XCTUnwrap(UUID(uuidString: "3f2504e0-4f89-11d3-9a0c-0305e82c3301"))
-        XCTAssertEqual(directory.agent(forPane: pane)?.name, "sol")
-        XCTAssertNil(directory.agent(forPane: UUID()))
-    }
-
     func testBadgeWordsComeFromTheReason() {
         let blocked = agent(state: .blocked, since: Date(), reason: "question")
         XCTAssertEqual(PaneBadge(agent: blocked, attention: .blocked).detail, "질문")

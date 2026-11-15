@@ -1,10 +1,9 @@
 import SwiftUI
 import AppKit
 
-/// Main content view with two-pane layout.
+/// 작업 창 하나: 사이드바 카드와 터미널 영역.
 /// 창마다 하나씩 생성된다 — AppState가 여기 살아야 창별 독립 선택이 가능하다.
 struct ContentView: View {
-    private let windowKind: WindowKind
     @Binding private var sceneWindowStateId: UUID?
     @StateObject private var appState: AppState
     // The sidebar observes its own activity data. Activity updates must not
@@ -16,28 +15,14 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
 
-    init(windowKind: WindowKind = .workspace, windowStateId: Binding<UUID?> = .constant(nil)) {
-        self.windowKind = windowKind
+    init(windowStateId: Binding<UUID?> = .constant(nil)) {
         _sceneWindowStateId = windowStateId
-        _appState = StateObject(wrappedValue: AppState(
-            windowKind: windowKind,
-            requestedWindowStateId: windowStateId.wrappedValue
-        ))
-    }
-
-    private var isDarkNow: Bool {
-        switch appState.preferredAppearance {
-        case "light": return false
-        case "dark": return true
-        default:
-            return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        }
+        _appState = StateObject(wrappedValue: AppState(requestedWindowStateId: windowStateId.wrappedValue))
     }
 
     /// 창별 라이트/다크 — preferredColorScheme은 이 창(씬) 전체에 적용된다
     /// (타이틀바 텍스트·툴바·시트 포함). nil이면 시스템 추종.
     private var preferredScheme: ColorScheme? {
-        if windowKind == .quick { return .light }
         switch appState.preferredAppearance {
         case "light": return .light
         case "dark": return .dark
@@ -46,10 +31,7 @@ struct ContentView: View {
     }
 
     private var windowTitle: String {
-        if windowKind == .quick {
-            return appState.selectedSession?.name ?? "Hermes"
-        }
-        return appState.selectedWorkspace?.name ?? "SpaceManager"
+        appState.selectedWorkspace?.name ?? "SpaceManager"
     }
 
     private var sidebarBinding: Binding<Bool> {
@@ -67,13 +49,7 @@ struct ContentView: View {
     }
 
     var body: some View {
-        Group {
-            if windowKind == .workspace {
-                workspaceLayout
-            } else {
-                quickLayout
-            }
-        }
+        workspaceLayout
         // Extend both panels into the titlebar; only the narrow outer frame remains.
         .ignoresSafeArea(.container, edges: .top)
         .background {
@@ -88,12 +64,6 @@ struct ContentView: View {
         .environmentObject(terminalLayout)
         .focusedSceneObject(appState)
         .preferredColorScheme(preferredScheme)
-        .onChange(of: appState.preferredAppearance) {
-            // tmux 상태바는 전역 — 마지막으로 토글된 창의 무드를 따른다 (라이트→soft)
-            if windowKind == .workspace && appState.preferredAppearance == "light" {
-                AppearanceManager.syncTmuxThemeToSoft()
-            }
-        }
         .sheet(isPresented: $appState.showNewWorkspaceSheet) {
             NewWorkspaceSheet()
                 .environmentObject(appState)
@@ -112,14 +82,12 @@ struct ContentView: View {
             if sceneWindowStateId == nil {
                 sceneWindowStateId = appState.windowStateId
             }
-            if windowKind == .workspace {
-                RecentActivityScanner.shared.start(owner: appState.windowStateId)
-            }
+            RecentActivityScanner.shared.start(owner: appState.windowStateId)
             WindowRestorer.openRemainingWindowsIfNeeded(openWindow)
-            WindowOpener.register(openWindow)   // CLI(window.new / quick.new)가 창을 열 수 있게
+            WindowOpener.register(openWindow)   // CLI(window.new)가 창을 열 수 있게
         }
         .onDisappear {
-            if windowKind == .workspace, !appState.shouldCloseOnAppearance {
+            if !appState.shouldCloseOnAppearance {
                 RecentActivityScanner.shared.stop(owner: appState.windowStateId)
             }
         }
@@ -151,28 +119,6 @@ extension ContentView {
     private var cardRim: some View {
         RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
             .strokeBorder(Color(Chrome.hairline), lineWidth: 1)
-    }
-
-    private var quickLayout: some View {
-        ZStack(alignment: .top) {
-            WorkspaceCanvasSurface(windowKind: windowKind, isDark: isDarkNow)
-                .ignoresSafeArea()
-
-            HStack(alignment: .top, spacing: 12) {
-                QuickSidebarView()
-                    .frame(width: Sidebar.expandedWidth)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                TerminalAreaView()
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .background {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color(nsColor: GlassSurfacePolicy.terminalCardColor(for: windowKind)))
-                            .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
-                    }
-            }
-            .padding(12)
-        }
     }
 }
 

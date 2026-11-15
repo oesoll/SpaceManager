@@ -69,12 +69,6 @@ struct SpaceManagerApp: App {
         .commands {
             AppCommands()
         }
-
-        WindowGroup(id: "quick", for: UUID.self) { $windowStateId in
-            ContentView(windowKind: .quick, windowStateId: $windowStateId)
-                .frame(minWidth: 760, minHeight: 520)
-        }
-        .windowStyle(.hiddenTitleBar)
     }
 }
 
@@ -83,7 +77,7 @@ struct AppCommands: Commands {
     @FocusedObject private var appState: AppState?
     @Environment(\.openWindow) private var openWindow
 
-    private var isWorkspaceWindow: Bool { appState?.windowKind == .workspace }
+    private var isWorkspaceWindow: Bool { appState != nil }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -92,34 +86,21 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: .command)
 
-            Button("New Quick Window") {
-                openWindow(id: "quick", value: UUID())
-            }
-            .keyboardShortcut("n", modifiers: [.command, .option])
-
             Divider()
 
             Button("New Workspace") {
                 appState?.showNewWorkspaceSheet = true
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
-            .disabled(appState == nil || appState?.windowKind == .quick)
+            .disabled(appState == nil)
 
-            Button(appState?.windowKind == .quick ? "New Quick Conversation" : "New Terminal Tab") {
+            Button("New Tab") {
                 if let appState, let layout = appState.selectedLayout {
                     appState.beginLayoutNewTab(in: layout)
-                } else {
-                    appState?.addDefaultTab()
                 }
             }
             .keyboardShortcut("t", modifiers: .command)
-            .disabled(appState == nil)
-
-            Button("New tmux Tab") {
-                appState?.addTmuxTab()
-            }
-            .keyboardShortcut("t", modifiers: [.command, .shift])
-            .disabled(appState == nil || appState?.windowKind == .quick || !TmuxBootstrap.isTmuxAvailable)
+            .disabled(appState?.selectedLayout == nil)
         }
 
         CommandMenu("Tabs") {
@@ -193,11 +174,8 @@ enum WindowRestorer {
         didRun = true
         // 시스템 상태 복원이 창을 이미 띄웠을 수 있으므로 잠시 뒤 부족분 계산
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            let storage = WorkspaceStorage.shared
-            for kind in WindowKind.allCases {
-                for state in storage.unclaimedWindowStates(for: kind) {
-                    openWindow(id: kind.sceneID, value: state.id)
-                }
+            for state in WorkspaceStorage.shared.unclaimedWindowStates() {
+                openWindow(id: "main", value: state.id)
             }
         }
     }

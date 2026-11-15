@@ -40,7 +40,7 @@ final class AgentPaneReconnectTests: XCTestCase {
 
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
-        let session = TerminalSession(kind: .shell, name: "qa", workingDirectory: NSHomeDirectory(),
+        let session = TerminalSession(name: "qa", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "qa", host: host, agent: nil))
         let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 400, height: 120), styleMask: [.borderless],
                               backing: .buffered, defer: false)
@@ -65,27 +65,5 @@ final class AgentPaneReconnectTests: XCTestCase {
         XCTAssertTrue(wait(5) { !session.isReconnecting }, "the new connection was never taken")
         XCTAssertTrue(wait(3) { (session.terminalView?.readText(lastLines: 5) ?? "").contains("again") },
                       "the shown terminal is not the new connection")
-    }
-
-    /// 원격 tmux 탭(arch 워크스페이스)도 같은 길이다: ssh가 실패하면(255) 다시 붙기를 시작해야 한다. 터미널이
-    /// 패널 명령을 login으로 감싸 0만 돌려주던 동안은 끊긴 ssh가 정상 종료로 보여 탭이 죽은 채 남았다.
-    /// 이름을 풀 수 없는 호스트로 진짜 ssh를 띄워 255를 받는다(공유 연결은 건드리지 않는다).
-    func testRemoteTmuxTabStartsReconnectingWhenSshFails() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["SM_CAPTURE"] == "1", "set SM_CAPTURE=1")
-        _ = NSApplication.shared
-        NSApp.setActivationPolicy(.accessory)
-        let session = TerminalSession(kind: .tmuxMain, name: "qa", workingDirectory: NSHomeDirectory(),
-                                      tmuxSessionName: "qa", remoteHost: "sm-reconnect-test.invalid")
-        let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 400, height: 120), styleMask: [.borderless],
-                              backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        let host = TerminalHostView(frame: NSRect(x: 0, y: 0, width: 400, height: 120))
-        window.contentView = host
-        window.orderFrontRegardless()
-        host.show(session.getOrCreateTerminal())
-        defer { session.cleanup(force: true); window.close() }
-        let deadline = Date().addingTimeInterval(10)
-        while !session.isReconnecting && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
-        XCTAssertTrue(session.isReconnecting, "ssh failed but the remote tmux tab did not start reconnecting")
     }
 }

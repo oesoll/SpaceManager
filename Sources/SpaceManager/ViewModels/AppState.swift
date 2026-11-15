@@ -2,11 +2,11 @@ import Foundation
 import SwiftUI
 import Combine
 
-/// 창 하나의 상태. 워크스페이스 목록 자체는 WorkspaceStorage.shared(전역)가 소유한다.
+/// 창 하나의 상태: 그 창의 워크스페이스 목록과 고른 워크스페이스. 탭·패널은 세션 층의 배치 파일이 원본이고
+/// (`LayoutDirectory`), 이 창은 그것을 그린다.
 class AppState: ObservableObject {
     let storage = WorkspaceStorage.shared
 
-    let windowKind: WindowKind
     let windowStateId: UUID
     let shouldCloseOnAppearance: Bool
 
@@ -20,15 +20,6 @@ class AppState: ObservableObject {
     @Published var selectedWorkspace: Workspace?
     @Published var selectedProject: Project?
 
-    @Published var sessions: [TerminalSession] = []
-    @Published var selectedSession: TerminalSession? {
-        didSet { observeSelectedSession() }
-    }
-    private var sessionsByWorkspace: [UUID: [TerminalSession]] = [:]
-    private var selectedSessionIdByWorkspace: [UUID: UUID] = [:]
-    private var selectedSessionObservation: AnyCancellable?
-    /// 탭별 패널 분할. 나누지 않은 탭은 여기 없다.
-    let panes = PaneStore()
     /// 배치 데이터가 있는 워크스페이스의 패널 터미널과 화면 쪽 상태.
     let layoutTerminals = LayoutTerminals()
     let layoutInteraction = LayoutInteraction()
@@ -41,13 +32,12 @@ class AppState: ObservableObject {
     @Published var preferredAppearance: String =
         UserDefaults.standard.string(forKey: "preferredAppearance") ?? "system"
 
-    init(windowKind: WindowKind = .workspace, requestedWindowStateId: UUID? = nil) {
-        self.windowKind = windowKind
+    init(requestedWindowStateId: UUID? = nil) {
         // windowStateId(let)를 모든 분기에서 먼저 확정해야 한다 — self.storage 접근(구독 설정)은
         // 저장 프로퍼티가 전부 초기화된 뒤에만 허용되므로, claim 판단을 그보다 앞에 끝낸다.
         let sharedStorage = WorkspaceStorage.shared
         let discardRequestedState = requestedWindowStateId.flatMap { requestedID in
-            sharedStorage.windowStates.first { $0.id == requestedID && $0.resolvedKind == windowKind }
+            sharedStorage.windowStates.first { $0.id == requestedID }
         }.map(WorkspaceStorage.isDiscardableEmptyWorkspaceState) ?? false
         shouldCloseOnAppearance = discardRequestedState
         if discardRequestedState, let requestedWindowStateId {
@@ -55,10 +45,10 @@ class AppState: ObservableObject {
         }
         let claimed: WindowState?
         if let requestedWindowStateId, !discardRequestedState {
-            claimed = sharedStorage.claimWindowState(id: requestedWindowStateId, kind: windowKind)
+            claimed = sharedStorage.claimWindowState(id: requestedWindowStateId)
         } else {
             // scene value가 없던 구 버전/최초 기본 창만 순번 migration을 거친다.
-            claimed = sharedStorage.claimNextWindowState(kind: windowKind)
+            claimed = sharedStorage.claimNextWindowState()
         }
         if let claimed {
             windowStateId = claimed.id
@@ -70,17 +60,11 @@ class AppState: ObservableObject {
             } else {
                 windowStateId = UUID()
             }
-            sharedStorage.registerClaimed(windowStateId, kind: windowKind)
+            sharedStorage.registerClaimed(windowStateId)
         }
 
-        if windowKind == .quick {
-            preferredAppearance = "light"
-        }
         if let claimed {
             restore(from: claimed)
-        } else if windowKind == .quick {
-            // 비어 있는 Quick 창도 창 종류 자체가 재시작 뒤 복원되어야 한다.
-            persistWindowState()
         } else if storage.windowStates.isEmpty && !storage.workspaces.isEmpty {
             // 업그레이드 경로: 창 상태가 하나도 없으면 레거시 전역 목록(workspaces.json)을
             // 첫 창으로 1회 이관한다. 이후 생성되는 새 창(Cmd+N)은 빈 목록으로 시작.
@@ -109,29 +93,11 @@ class AppState: ObservableObject {
         restoredWindowIsZoomed = state.resolvedIsZoomed
         restoredWindowIsFullscreen = state.resolvedIsFullscreen
 
-        if windowKind == .quick {
-            // Quick 탭은 브라우저 탭처럼 프로세스 수명만 가진다. 창 종류만 복원하고
-            // 이전 대화 PTY는 되살리지 않는다 (대화 자체는 ccv transcript에 남는다).
-            sessions = []
-            selectedSession = nil
-            preferredAppearance = "light"
-            return
-        }
-
         // 레거시 상태(workspaces 없음)는 전역 목록에서 1회 이관
         workspaces = state.workspaces ?? storage.workspaces
         if let appearance = state.appearance {
             preferredAppearance = appearance
         }
-        let workspaceIds = Set(workspaces.map(\.id))
-        for wsTabs in state.workspaceTabs where workspaceIds.contains(wsTabs.workspaceId) {
-            let restored = wsTabs.tabs.map { TerminalSession(snapshot: $0) }
-            sessionsByWorkspace[wsTabs.workspaceId] = restored
-            if let selectedId = wsTabs.selectedTabId {
-                selectedSessionIdByWorkspace[wsTabs.workspaceId] = selectedId
-            }
-        }
-        // 터미널 프로세스는 여기서 시작하지 않는다 — 탭이 처음 화면에 붙을 때 게으르게 시작
         if let wsId = state.selectedWorkspaceId,
            let workspace = workspaces.first(where: { $0.id == wsId }) {
             selectWorkspace(workspace)
@@ -140,21 +106,11 @@ class AppState: ObservableObject {
         }
     }
 
-    private func persistWindowState() {
-        var wsStates: [WorkspaceTabsState] = []
-        for (wsId, wsSessions) in sessionsByWorkspace where !wsSessions.isEmpty {
-            wsStates.append(WorkspaceTabsState(
-                workspaceId: wsId,
-                selectedTabId: selectedSessionIdByWorkspace[wsId],
-                tabs: wsSessions.map { $0.snapshot() }
-            ))
-        }
+    func persistWindowState() {
         WorkspaceStorage.shared.updateWindowState(WindowState(
             id: windowStateId,
-            kind: windowKind,
             selectedWorkspaceId: selectedWorkspace?.id,
             workspaces: workspaces,
-            workspaceTabs: wsStates,
             appearance: preferredAppearance,
             frame: restoredWindowFrame,
             isZoomed: restoredWindowIsZoomed,
@@ -177,19 +133,8 @@ class AppState: ObservableObject {
     }
 
     func setAppearance(_ raw: String) {
-        guard windowKind == .workspace else { return }
         preferredAppearance = raw
         persistWindowState()
-    }
-
-    private func observeSelectedSession() {
-        selectedSessionObservation = selectedSession?.objectWillChange.sink { [weak self] _ in
-            // TerminalSession.objectWillChange는 name 변경 직전에 오므로 새 값을 읽는
-            // 다음 main turn에 AppState를 무효화해 ContentView의 NSWindow.title도 갱신한다.
-            DispatchQueue.main.async {
-                self?.objectWillChange.send()
-            }
-        }
     }
 
     // MARK: - Workspace Management
@@ -202,7 +147,7 @@ class AppState: ObservableObject {
         let path = ((rootPath.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath as NSString).standardizingPath
         let host = remoteHost?.trimmingCharacters(in: .whitespacesAndNewlines)
         var workspace = Workspace(rootPath: path, customName: customName, remoteHost: host?.isEmpty == false ? host : nil)
-        if let layoutName, !layoutName.isEmpty { workspace.tmuxSessionName = layoutName }
+        if let layoutName, !layoutName.isEmpty { workspace.layoutName = layoutName }
         if let error = workspace.executionLocationError(host: workspace.remoteHost) { return error }
         workspaces.append(workspace)
         if select { selectWorkspace(workspace) } else { persistWindowState() }
@@ -217,8 +162,8 @@ class AppState: ObservableObject {
         guard let index = workspaceIndex(id: workspace.id) else { return }
         // 배치 이름은 사이드바 이름에서 나온다(따로 정하지 않았으면). 이름만 바꾸면 다른 배치를 찾아 화면이 비므로,
         // 지금 이름을 배치 이름으로 묶어 둔 뒤 바꾼다.
-        if workspaces[index].tmuxSessionName?.isEmpty ?? true {
-            workspaces[index].tmuxSessionName = workspaces[index].effectiveTmuxSessionName
+        if workspaces[index].layoutName?.isEmpty ?? true {
+            workspaces[index].layoutName = workspaces[index].effectiveLayoutName
         }
         workspaces[index].rename(to: newName)
         if selectedWorkspace?.id == workspace.id {
@@ -247,31 +192,21 @@ class AppState: ObservableObject {
         persistWindowState()
     }
 
-    /// tmux 세션명 커스텀 설정 — 마이그레이션 수단 (기존 세션 이름을 그대로 기입하면 연결됨).
-    /// 변경 시 해당 워크스페이스의 메인 탭을 재생성해 새 세션명으로 재attach한다.
-    func setTmuxSessionName(_ workspace: Workspace, to raw: String) {
+    /// 배치 이름을 정한다 — 이미 있는 배치(`sm ws ls`)에 이 사이드바 항목을 잇는 수단. 비우면 이름에서 파생한다.
+    /// 앞 배치의 패널 터미널은 닫는다(세션은 계속 돈다).
+    func setLayoutName(_ workspace: Workspace, to raw: String) {
         guard let index = workspaceIndex(id: workspace.id) else { return }
+        layoutTerminals.discard(layoutKey: layoutKey(for: workspaces[index]))
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        workspaces[index].tmuxSessionName = trimmed.isEmpty ? nil : TmuxBootstrap.sanitizeSessionName(trimmed)
-        let ws = workspaces[index]
-        if selectedWorkspace?.id == ws.id {
-            selectedWorkspace = ws
-        }
-        // 메인 탭 재생성 (탭 자체는 detach만 되고 tmux 세션은 무손실)
-        var wsSessions = sessionsByWorkspace[ws.id] ?? []
-        if let index = wsSessions.firstIndex(where: { $0.kind == .tmuxMain }) {
-            wsSessions[index].cleanup()
-            wsSessions.remove(at: index)
-        }
-        sessionsByWorkspace[ws.id] = wsSessions
-        if selectedWorkspace?.id == ws.id {
-            ensureSessions(for: ws)
-            selectedSessionIdByWorkspace[ws.id] = selectedSession?.id
+        workspaces[index].layoutName = trimmed.isEmpty ? nil : Workspace.sanitizeLayoutName(trimmed)
+        if selectedWorkspace?.id == workspace.id {
+            selectedWorkspace = workspaces[index]
         }
         persistWindowState()
     }
 
-    /// 원격 호스트 변경. 탭은 detach만 되고 tmux 세션은 어느 쪽 머신에서든 무손실.
+    /// 실행 위치를 바꾼다. 배치와 세션은 기기마다 따로이므로, 화면은 그 기기의 같은 이름 배치를 그린다.
+    /// 앞 기기의 패널 터미널은 닫는다(세션은 그 기기에서 계속 돈다).
     @discardableResult
     func setRemoteHost(_ workspace: Workspace, to raw: String) -> String? {
         guard let index = workspaceIndex(id: workspace.id) else { return "워크스페이스를 찾을 수 없습니다." }
@@ -279,40 +214,26 @@ class AppState: ObservableObject {
         let host = trimmed.isEmpty ? nil : trimmed
         guard workspaces[index].remoteHost != host else { return nil }
         if let error = workspaces[index].executionLocationError(host: host) { return error }
+        layoutTerminals.discard(layoutKey: layoutKey(for: workspaces[index]))
         workspaces[index].remoteHost = host
         workspaces[index].updatedAt = Date()
-        let ws = workspaces[index]
-        if selectedWorkspace?.id == ws.id {
-            selectedWorkspace = ws
-        }
-        // 대상만 바꾼다. 배열을 비우면 추가 tmux 탭과 선택 ID까지 사라진다.
-        let previous = sessions(for: ws)
-        let updated = previous.map { $0.retargeted(to: host) }
-        for session in previous { panes.discard(tabID: session.id); session.cleanup() }
-        sessionsByWorkspace[ws.id] = updated
-        if selectedWorkspace?.id == ws.id {
-            ensureSessions(for: ws)
-            selectedSessionIdByWorkspace[ws.id] = selectedSession?.id
+        if selectedWorkspace?.id == workspace.id {
+            selectedWorkspace = workspaces[index]
         }
         persistWindowState()
         return nil
     }
 
+    /// 사이드바에서 뺀다. 배치와 세션은 세션 층에 그대로 남는다(`sm ws rm`이 배치를 지운다).
     func deleteWorkspace(_ workspace: Workspace) {
+        layoutTerminals.discard(layoutKey: layoutKey(for: workspace))
         workspaces.removeAll { $0.id == workspace.id }
-        if let sessions = sessionsByWorkspace[workspace.id] {
-            for session in sessions { panes.discard(tabID: session.id); session.cleanup() }
-        }
-        sessionsByWorkspace[workspace.id] = nil
-        selectedSessionIdByWorkspace[workspace.id] = nil
         if selectedWorkspace?.id == workspace.id {
             if let next = workspaces.first {
                 selectWorkspace(next)
             } else {
                 selectedWorkspace = nil
                 selectedProject = nil
-                sessions = []
-                selectedSession = nil
             }
         }
         persistWindowState()
@@ -321,7 +242,6 @@ class AppState: ObservableObject {
     /// 사이드바 항목을 다른 창으로 옮긴다. 배치와 세션은 세션 층에 그대로 있고, 칸은 받은 창이 고를 때 다시 붙는다.
     /// 받은 창의 화면은 그대로 둔다 — 비어 있던 창만 이것을 보여 준다.
     func transferWorkspace(_ workspace: Workspace, to target: AppState) {
-        layoutTerminals.discard(layoutKey: layoutKey(for: workspace))
         deleteWorkspace(workspace)
         target.workspaces.append(workspace)
         if target.selectedWorkspace == nil {
@@ -332,13 +252,8 @@ class AppState: ObservableObject {
     }
 
     func selectWorkspace(_ workspace: Workspace) {
-        if let current = selectedWorkspace {
-            sessionsByWorkspace[current.id] = sessions
-            selectedSessionIdByWorkspace[current.id] = selectedSession?.id
-        }
         selectedWorkspace = workspace
         selectedProject = Project(path: workspace.rootPath, name: workspace.name)
-        ensureSessions(for: workspace)
         persistWindowState()
     }
 
@@ -365,219 +280,5 @@ class AppState: ObservableObject {
 
     func selectProject(_ project: Project) {
         selectedProject = project
-    }
-
-    // MARK: - Terminal Sessions
-
-    /// 순수 셸 탭 (Cmd+T)
-    func addShellTab() {
-        guard let workspace = selectedWorkspace else { return }
-        let session = TerminalSession(
-            kind: .shell,
-            name: TerminalSession.defaultShellName(remoteHost: workspace.remoteHost),
-            workingDirectory: workspace.rootPath,
-            remoteHost: workspace.remoteHost
-        )
-        appendAndSelect(session, in: workspace)
-    }
-
-    func addDefaultTab() {
-        if windowKind == .quick {
-            addQuickSession()
-        } else {
-            addShellTab()
-        }
-    }
-
-    /// 폴더나 이름 입력 없이 홈에서 Claude 대화를 즉시 시작한다.
-    func addQuickSession(
-        initialPrompt: String? = nil,
-        resumeSessionId: String? = nil,
-        configuration: QuickSessionConfiguration = .default
-    ) {
-        guard windowKind == .quick else { return }
-        let launch: QuickLaunch
-        if let resumeSessionId, UUID(uuidString: resumeSessionId) != nil {
-            launch = .resume(sessionId: resumeSessionId)
-        } else if let initialPrompt {
-            let trimmed = initialPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            launch = trimmed.isEmpty ? .blank : .initialPrompt(trimmed)
-        } else {
-            launch = .blank
-        }
-        let session = TerminalSession(
-            kind: .quick,
-            name: QuickSessionPolicy.initialSessionName,
-            workingDirectory: QuickSessionPolicy.ensureWorkingDirectory(),
-            quickLaunch: launch,
-            quickConfiguration: configuration
-        )
-        sessions.append(session)
-        selectSession(session)
-        session.startQuickImmediately()
-    }
-
-    func resumeQuickConversation(sessionId: String) {
-        if let existing = sessions.first(where: {
-            $0.matchesQuickConversation(sessionId: sessionId)
-        }) {
-            selectSession(existing)
-            return
-        }
-        addQuickSession(resumeSessionId: sessionId)
-    }
-
-    /// 사이드바의 "새 대화"는 프로세스를 미리 띄우지 않고 Hermes 홈으로 돌아간다.
-    /// 기존 Quick 탭은 열린 채 유지하며, Cmd+T만 즉시 blank 세션을 시작한다.
-    func showQuickHome() {
-        guard windowKind == .quick else { return }
-        selectedSession = nil
-    }
-
-    /// 추가 tmux 탭 — <세션명>-2, -3, … 자동 넘버링
-    func addTmuxTab() {
-        guard let workspace = selectedWorkspace else { return }
-        let base = workspace.effectiveTmuxSessionName
-        let used = Set(sessions.compactMap { $0.tmuxSessionName })
-        var n = 2
-        while used.contains("\(base)-\(n)") { n += 1 }
-        let sessionName = "\(base)-\(n)"
-        let session = TerminalSession(
-            kind: .tmuxExtra,
-            name: sessionName,
-            workingDirectory: workspace.rootPath,
-            tmuxSessionName: sessionName,
-            remoteHost: workspace.remoteHost
-        )
-        appendAndSelect(session, in: workspace)
-    }
-
-    private func makeMainTab(for workspace: Workspace) -> TerminalSession {
-        // tmux가 없으면 메인 탭도 순수 셸로 폴백 (배너는 TerminalAreaView가 표시).
-        // 원격 워크스페이스는 로컬 tmux가 필요 없다 — 서버가 저쪽에 있다.
-        guard TmuxBootstrap.isTmuxAvailable || workspace.isRemote else {
-            return TerminalSession(kind: .shell, name: "zsh", workingDirectory: workspace.rootPath)
-        }
-        let sessionName = workspace.effectiveTmuxSessionName
-        return TerminalSession(
-            kind: .tmuxMain,
-            name: sessionName,
-            workingDirectory: workspace.rootPath,
-            tmuxSessionName: sessionName,
-            remoteHost: workspace.remoteHost
-        )
-    }
-
-    /// 선택되지 않은 워크스페이스의 탭도 CLI가 나열할 수 있게 한다 (읽기 전용).
-    func sessions(for workspace: Workspace) -> [TerminalSession] {
-        if selectedWorkspace?.id == workspace.id { return sessions }
-        return sessionsByWorkspace[workspace.id] ?? []
-    }
-
-    private func appendAndSelect(_ session: TerminalSession, in workspace: Workspace) {
-        sessions.append(session)
-        sessionsByWorkspace[workspace.id] = sessions
-        selectSession(session)
-        persistWindowState()
-    }
-
-    func removeSession(_ session: TerminalSession) {
-        if windowKind == .quick {
-            removeQuickSession(session)
-            return
-        }
-        // 메인 탭은 닫기 대상이 아니다 — ensureSessions가 다음 방문에 어차피 재생성하므로
-        // 여기서 지우면 "지워졌다가 되살아나는" 유령 삭제가 된다. UI(WorkspaceTabRow)도
-        // 메인 탭엔 ×를 숨기지만, 진입점이 늘어도 안전하도록 모델에서도 막는다.
-        guard session.kind != .tmuxMain else { return }
-        panes.discard(tabID: session.id)
-        if sessions.contains(where: { $0.id == session.id }) {
-            session.cleanup()
-            sessions.removeAll { $0.id == session.id }
-            if let workspace = selectedWorkspace {
-                sessionsByWorkspace[workspace.id] = sessions
-            }
-            if selectedSession?.id == session.id {
-                selectedSession = sessions.first
-            }
-        } else if let workspaceId = sessionsByWorkspace.first(where: { $0.value.contains { $0.id == session.id } })?.key {
-            // CLI는 선택되지 않은 워크스페이스의 탭도 닫는다. 화면 선택은 건드리지 않는다.
-            session.cleanup()
-            let remaining = (sessionsByWorkspace[workspaceId] ?? []).filter { $0.id != session.id }
-            sessionsByWorkspace[workspaceId] = remaining
-            if selectedSessionIdByWorkspace[workspaceId] == session.id {
-                selectedSessionIdByWorkspace[workspaceId] = remaining.first?.id
-            }
-        } else {
-            return
-        }
-        persistWindowState()
-    }
-
-    /// Quick의 ×는 PTY만 즉시 종료한다. tmux 세션이 없으므로 detach/kill 구분도,
-    /// 확인 대화상자도 없다.
-    func removeQuickSession(_ session: TerminalSession) {
-        guard windowKind == .quick, session.kind == .quick else { return }
-        session.cleanup(force: true)
-        sessions.removeAll { $0.id == session.id }
-        if selectedSession?.id == session.id {
-            selectedSession = sessions.first
-        }
-    }
-
-    func selectSession(_ session: TerminalSession) {
-        guard selectedSession?.id != session.id else {
-            session.restartIfDead()
-            session.focusTerminal()
-            return
-        }
-        selectedSession = session
-        if let workspace = selectedWorkspace {
-            selectedSessionIdByWorkspace[workspace.id] = session.id
-        }
-        session.restartIfDead()
-        session.focusTerminal()
-        // Quick 탭/선택은 의도적으로 복원하지 않으므로 클릭 경로에서
-        // window-states.json 원자 쓰기를 하지 않는다.
-        if windowKind == .workspace {
-            persistWindowState()
-        }
-    }
-
-    func selectNextSession() {
-        guard !sessions.isEmpty else { return }
-        guard let current = selectedSession,
-              let index = sessions.firstIndex(where: { $0.id == current.id }) else {
-            selectSession(sessions[0])
-            return
-        }
-        selectSession(sessions[(index + 1) % sessions.count])
-    }
-
-    func selectPreviousSession() {
-        guard !sessions.isEmpty else { return }
-        guard let current = selectedSession,
-              let index = sessions.firstIndex(where: { $0.id == current.id }) else {
-            selectSession(sessions[0])
-            return
-        }
-        selectSession(sessions[(index - 1 + sessions.count) % sessions.count])
-    }
-
-    private func ensureSessions(for workspace: Workspace) {
-        sessions = sessionsByWorkspace[workspace.id] ?? []
-        // 메인 탭 보장: 닫혔거나 처음이면 재생성 → tmux 세션에 재attach (스펙 §5)
-        // 원격 워크스페이스의 tmux는 저쪽 머신에 있으므로 로컬 tmux 유무와 무관하다.
-        if !sessions.contains(where: { $0.kind == .tmuxMain })
-            && (TmuxBootstrap.isTmuxAvailable || workspace.isRemote) {
-            let main = makeMainTab(for: workspace)
-            sessions.insert(main, at: 0)
-        }
-        if sessions.isEmpty {
-            sessions = [makeMainTab(for: workspace)]
-        }
-        sessionsByWorkspace[workspace.id] = sessions
-        let storedId = selectedSessionIdByWorkspace[workspace.id]
-        selectedSession = sessions.first(where: { $0.id == storedId }) ?? sessions.first
     }
 }

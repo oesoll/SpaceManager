@@ -51,7 +51,7 @@ struct TerminalPalette: Equatable {
 
     /// 같은 역할의 라이트판. 97(강조)은 흰 바탕에서 사라지지 않게 검정에 가깝고,
     /// 37(보조)은 회색이다.
-    static let quickLight = TerminalPalette(colors: [
+    static let workspaceLight = TerminalPalette(colors: [
         "background": "#ffffff",
         // 흰 바탕의 순흑은 대비가 지나쳐 번쩍인다. 본문은 한 단 누르고, 강조(97)가 더 짙다.
         "foreground": "#2a2a2e",
@@ -77,9 +77,6 @@ struct TerminalPalette: Equatable {
         "brightCyan": "#11808c",
         "brightWhite": "#111113",
     ])
-
-    /// 라이트 작업 창은 Quick과 같은 라이트 역할 팔레트를 쓴다.
-    static let workspaceLight = quickLight
 
     /// 공용 터미널 패키지(GhosttyTerminal)에 넘기는 모양. 색 이름과 대비는 그대로다.
     var ghosttyTheme: GhosttyTheme {

@@ -47,7 +47,7 @@ final class SessionStageTests: XCTestCase {
 
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
-        let session = TerminalSession(kind: .shell, name: "qa", workingDirectory: NSHomeDirectory(),
+        let session = TerminalSession(name: "qa", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "qa", host: "mac", agent: nil))
         let director = try XCTUnwrap(session.stageDirector)
         director.sessionLayer = dir + "/sm-session"
@@ -144,7 +144,7 @@ final class SessionStageTests: XCTestCase {
         }
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
-        let session = TerminalSession(kind: .shell, name: "qa", workingDirectory: NSHomeDirectory(),
+        let session = TerminalSession(name: "qa", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "qa", host: "mac", agent: nil))
         let director = try XCTUnwrap(session.stageDirector)
         director.sessionLayer = dir + "/sm-session"
@@ -205,7 +205,7 @@ final class SessionStageTests: XCTestCase {
         }
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
-        let session = TerminalSession(kind: .shell, name: "qa", workingDirectory: NSHomeDirectory(),
+        let session = TerminalSession(name: "qa", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "qa", host: "mac", agent: nil))
         let director = try XCTUnwrap(session.stageDirector)
         director.sessionLayer = dir + "/sm-session"
@@ -259,7 +259,7 @@ final class SessionStageTests: XCTestCase {
         func input() -> String { (try? String(contentsOfFile: dir + "/input", encoding: .utf8)) ?? "" }
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
-        let session = TerminalSession(kind: .shell, name: "qa", workingDirectory: NSHomeDirectory(),
+        let session = TerminalSession(name: "qa", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "qa", host: "mac", agent: nil))
         let director = try XCTUnwrap(session.stageDirector)
         director.sessionLayer = dir + "/sm-session"

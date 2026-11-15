@@ -22,7 +22,7 @@ struct AgentTerminalView: View {
                 .overlay(alignment: .topTrailing) {
                     // 무대가 맡은 패널은 무대가 "연결 중"을 보인다(얼린 화면·막·빛·글).
                     if session.isReconnecting && session.stageDirector == nil {
-                        ReconnectingBadge(detail: session.lastConnectionFailure) {
+                        ReconnectingBadge(detail: nil) {
                             session.reconnectIfNeeded()
                         }
                     }
@@ -80,7 +80,6 @@ struct SessionTerminalWrapper: NSViewRepresentable {
     /// 작업 창 터미널은 창의 라이트/다크를 따른다. 보이는 세션만 갱신하고,
     /// 다른 탭은 다시 보일 때 이 경로를 지나며 맞춰진다.
     private func syncPalette() {
-        guard session.kind != .quick else { return }
         session.palette = colorScheme == .dark ? .workspaceDark : .workspaceLight
     }
 

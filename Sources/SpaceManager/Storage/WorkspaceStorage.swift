@@ -12,7 +12,6 @@ class WorkspaceStorage: ObservableObject {
     @Published var workspaces: [Workspace] = []
     @Published var windowStates: [WindowState] = []
     private var claimedWindowStateIds: Set<UUID> = []
-    private var claimedWindowKinds: [UUID: WindowKind] = [:]
 
     /// Base directory for storage
     private var storageDirectory: URL {
@@ -86,7 +85,10 @@ class WorkspaceStorage: ObservableObject {
         }
         do {
             let data = try Data(contentsOf: windowStatesFile)
-            windowStates = try decoder.decode([WindowState].self, from: data)
+            let decoded = try decoder.decode([WindowState].self, from: data)
+            // Quick 창은 없앴다(11/15). 그 창의 상태는 복원할 것이 없으므로 버린다.
+            windowStates = decoded.filter(\.isWorkspaceWindow)
+            if windowStates.count != decoded.count { saveWindowStates() }
         } catch {
             print("Error loading window states: \(error)")
             windowStates = []
@@ -103,14 +105,13 @@ class WorkspaceStorage: ObservableObject {
     }
 
     /// scene에 보존된 ID로 자기 상태만 claim한다. 복원 창의 생성 순서와 무관하다.
-    func claimWindowState(id: UUID, kind: WindowKind) -> WindowState? {
+    func claimWindowState(id: UUID) -> WindowState? {
         guard let state = Self.exactUnclaimedState(
             id: id,
-            kind: kind,
             states: windowStates,
             claimedIDs: claimedWindowStateIds
         ) else { return nil }
-        markClaimed(state.id, kind: kind)
+        markClaimed(state.id)
         return state
     }
 
@@ -118,39 +119,36 @@ class WorkspaceStorage: ObservableObject {
     /// 창 정체성 회귀를 테스트할 수 있게 순수 함수로 둔다.
     static func exactUnclaimedState(
         id: UUID,
-        kind: WindowKind,
         states: [WindowState],
         claimedIDs: Set<UUID>
     ) -> WindowState? {
         guard !claimedIDs.contains(id) else { return nil }
-        return states.first { $0.id == id && $0.resolvedKind == kind }
+        return states.first { $0.id == id }
     }
 
     /// scene value가 없던 구 버전 상태의 1회 migration 경로. 새 복원 경로는 ID claim만 쓴다.
-    func claimNextWindowState(kind: WindowKind) -> WindowState? {
+    func claimNextWindowState() -> WindowState? {
         guard let state = windowStates.first(where: {
-            $0.resolvedKind == kind
-                && !claimedWindowStateIds.contains($0.id)
+            !claimedWindowStateIds.contains($0.id)
                 && !Self.isDiscardableEmptyWorkspaceState($0)
         }) else {
             return nil
         }
-        markClaimed(state.id, kind: kind)
+        markClaimed(state.id)
         return state
     }
 
-    func registerClaimed(_ id: UUID, kind: WindowKind) {
-        markClaimed(id, kind: kind)
+    func registerClaimed(_ id: UUID) {
+        markClaimed(id)
     }
 
     func containsWindowState(id: UUID) -> Bool {
         windowStates.contains { $0.id == id }
     }
 
-    func unclaimedWindowStates(for kind: WindowKind) -> [WindowState] {
+    func unclaimedWindowStates() -> [WindowState] {
         windowStates.filter {
-            $0.resolvedKind == kind
-                && !claimedWindowStateIds.contains($0.id)
+            !claimedWindowStateIds.contains($0.id)
                 && !Self.isDiscardableEmptyWorkspaceState($0)
         }
     }
@@ -159,20 +157,10 @@ class WorkspaceStorage: ObservableObject {
     /// should not multiply during macOS scene restoration; a fresh Cmd-N window
     /// remains available while the app is running.
     static func isDiscardableEmptyWorkspaceState(_ state: WindowState) -> Bool {
-        state.resolvedKind == .workspace
-            && state.workspaces?.isEmpty == true
-            && state.workspaceTabs.isEmpty
+        state.workspaces?.isEmpty == true
     }
 
     var claimedCount: Int { claimedWindowStateIds.count }
-
-    func claimedCount(for kind: WindowKind) -> Int {
-        claimedWindowKinds.values.filter { $0 == kind }.count
-    }
-
-    func savedCount(for kind: WindowKind) -> Int {
-        windowStates.filter { $0.resolvedKind == kind }.count
-    }
 
     func updateWindowState(_ state: WindowState) {
         if let index = windowStates.firstIndex(where: { $0.id == state.id }) {
@@ -185,13 +173,11 @@ class WorkspaceStorage: ObservableObject {
 
     func removeWindowState(id: UUID) {
         claimedWindowStateIds.remove(id)
-        claimedWindowKinds[id] = nil
         windowStates.removeAll { $0.id == id }
         saveWindowStates()
     }
 
-    private func markClaimed(_ id: UUID, kind: WindowKind) {
+    private func markClaimed(_ id: UUID) {
         claimedWindowStateIds.insert(id)
-        claimedWindowKinds[id] = kind
     }
 }

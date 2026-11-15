@@ -88,16 +88,11 @@ enum FolderTint: String, CaseIterable, Identifiable {
 /// 사이드바 공통 룩 — 행 높이·아이콘 크기·라운딩을 한 곳에서 통일한다.
 /// 섹션마다 수치가 조금씩 다르면 패널 전체가 미묘하게 어수선해 보인다.
 enum Sidebar {
-    /// Quick 창 사이드바 폭.
-    static let expandedWidth: CGFloat = 240
     /// 작업 창 사이드바. 폴더 아이콘, 이름, 실행 위치가 한 줄에 들어갈 만큼만 —
     /// 넓은 사이드바는 그만큼 터미널 열을 깎는다. 긴 이름은 끝을 줄이고 툴팁에 전부 있다.
     static let workspaceWidth: CGFloat = 184
     static let compactWidth: CGFloat = 44
     static let collapseAnimation = Animation.easeInOut(duration: 0.48)
-    /// Quick 창 행의 라운딩·여백. 작업 창 목록은 아래 `list*` 값을 쓴다.
-    static let rowCornerRadius: CGFloat = 10
-    static let rowHorizontalPadding: CGFloat = 12
     static let listCornerRadius: CGFloat = 6
     static let listInset: CGFloat = 8
     /// 모든 워크스페이스 행이 같은 높이다. 선택된 행만 부제를 달아 키우면 목록의 리듬이 깨진다.
@@ -106,14 +101,6 @@ enum Sidebar {
     static let rowVerticalPadding: CGFloat = 8
     static let iconSize: CGFloat = 13
     static let iconFrame: CGFloat = 16
-}
-
-/// 홈 화면의 한글 글자. Fine과 같은 서체 — 없으면 `Font.custom`이 시스템 서체로 떨어진다.
-enum HomeFont {
-    static func greeting(_ size: CGFloat) -> Font { .custom("Pretendard-SemiBold", size: size) }
-    static let note = Font.custom("Pretendard-Medium", size: 14)
-    static let prompt = Font.custom("Pretendard-Regular", size: 16)
-    static let caption = Font.custom("Pretendard-Medium", size: 11)
 }
 
 /// 사이드바 섹션 헤더 — 워크스페이스 / 파일이 같은 얼굴을 갖도록 공용화.
@@ -136,51 +123,5 @@ struct SidebarSectionHeader<Trailing: View>: View {
         .padding(.horizontal, 16)
         .padding(.top, 14)
         .padding(.bottom, 8)
-    }
-}
-
-/// 헤르메스(Quick) 창 전용 사이드바 섹션 헤더 — claude.ai 데스크톱 감성(작고 옅은 라벨 위계)
-struct QuickSectionHeader<Trailing: View>: View {
-    let title: String
-    @ViewBuilder var trailing: Trailing
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 11, weight: .bold))
-                .tracking(0.3)
-                .foregroundColor(.secondary.opacity(0.95))
-            Spacer()
-            trailing
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 16)
-        .padding(.bottom, 6)
-    }
-}
-
-/// 라이트/다크는 창별이다 — ContentView의 preferredColorScheme이 창(씬) 단위로
-/// 적용한다. 여기는 tmux 쪽 연동만 남는다.
-enum AppearanceManager {
-    /// 앱 무드를 tmux 상태바까지 연장한다 (~/.smux/bin/smux-theme).
-    ///
-    /// 라이트로 갈 때만 soft를 호출한다 — 문제의 본질이 "화이트 크롬 위의 솔리드
-    /// pill 충돌"이고, 다크에서의 취향은 유저마다 갈리는 영역이라(현재 SEOL은
-    /// 다크에서도 soft 선호) 다크 전환 시 강제로 pill을 씌우면 취향과 싸우는
-    /// 동기화가 된다. 다크에서 pill을 원하게 되면 호출부에 else 분기로 dark 추가.
-    /// tmux 상태바는 전역이므로, 유저가 마지막으로 토글한 창의 무드를 따른다.
-    static func syncTmuxThemeToSoft() {
-        // 콜드부트 창에는 어떤 tmux 명령도 금지 (continuum 가드 오판 방지)
-        guard TmuxBootstrap.serverSocketExists, !TmuxBootstrap.isInColdBootWindow else { return }
-        let switcher = NSHomeDirectory() + "/.smux/bin/smux-theme"
-        guard FileManager.default.isExecutableFile(atPath: switcher) else { return }
-        DispatchQueue.global(qos: .utility).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: switcher)
-            process.arguments = ["soft"]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            try? process.run()   // best-effort — 실패해도 앱 테마 전환은 이미 완료
-        }
     }
 }

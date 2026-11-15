@@ -20,7 +20,7 @@ Set up seol for me: read https://raw.githubusercontent.com/oesoll/seol/main/SETU
 
 sm never owns an agent. Each one is a seol session held by its own `peer-hold` process on the machine it runs on; a pane only attaches to it (`sm-session attach NAME@HOST`). Layout is data too: a workspace's tabs and split tree live in `~/.smux/state/sm/workspaces/<ws>.json` on that machine, and the app draws the file. So an agent can rearrange your screen with the same commands you use, and nothing is lost when the app goes away.
 
-This boundary came from real session-loss incidents when tmux and the app were tangled together. Plain shell and tmux tabs still work for everything that is not an agent.
+This boundary came from real session-loss incidents when tmux and the app were tangled together, and the app no longer runs tmux at all: a workspace without a layout gets one from the session layer (`sm ws new`, one tab with a shell pane) the first time you open it.
 
 ### Native windows, libghostty terminals
 
@@ -32,7 +32,7 @@ The terminal layer lives in a sibling package, `../GhosttyTerminal`, which Fine 
 
 Workspace windows place a sidebar card and a terminal card on a flat canvas, separated by hairlines rather than shadows. Each sidebar row shows a folder icon (its color can be set per workspace from the context menu), the name, the activity dot, and where it runs (`mac`, `arch`, …). The sidebar button switches between the full sidebar and a compact rail of colored folder icons at the same vertical positions. Light and dark apply to the whole window, terminal palette included.
 
-The sidebar and terminal card move together with a fixed gap. The terminal viewport stays at its existing size during the transition and receives the final size once the animation ends, avoiding repeated tmux redraws. Tab switches retain the outgoing surface until the selected terminal has rendered, then fade between them.
+The sidebar and terminal card move together with a fixed gap. The terminal viewport stays at its existing size during the transition and receives the final size once the animation ends, avoiding repeated redraws. Tab switches retain the outgoing surface until the selected terminal has rendered, then fade between them.
 
 Layout tabs (workspaces drawn from session-layer data) that have been shown once stay mounted, stacked, and only the selected one is visible. Rebuilding a tab's panes on every switch stalled the main thread for 40–70 ms and showed empty cards for a frame before the reattached terminals drew (measured with `sm perf` and `sm capture --burst`). Hidden tabs' surfaces are occluded, so they do not render, take keys, hover focus, clicks, or the focus rim; the shown tab's focused pane takes the keyboard. Switching workspaces clears the stack.
 
@@ -40,23 +40,15 @@ Layout tabs (workspaces drawn from session-layer data) that have been shown once
 
 The activity dots do not poll agent processes and do not infer activity from terminal repainting. SpaceManager watches Claude, Codex, and Gemini transcripts with FSEvents. Only changed, known transcripts are statted for the generating indicator; a one-shot timer expires that indicator without reopening files. A 30-second reconciliation discovers missed changes and ages out old activity, reusing parsed metadata for unchanged files. Transcript timestamps determine recency, so a batch mtime touch does not make old conversations appear new.
 
-Display scanners pause when every window is covered or minimized, reconcile when a window becomes visible, and stop when their last consumer closes. Quick history loads in batches of 30 as you scroll and reads only appended bytes after indexing a transcript. Open conversations retain title tracking even outside the loaded history page.
-
-### The session-based window does not use tmux
-
-The app includes a session-based quick window for everyday Claude conversations that do not need a project. It starts Claude Code directly in a PTY with `~/cld` as its working directory. Quick tabs are intentionally transient and are not restored after an app restart. Claude Code transcripts remain available for resume.
-
-The session-based window reuses Claude Code's `ai-title` records for tab and window titles. Its recent conversation list reads the same transcripts and resumes a session by ID.
+Display scanners pause when every window is covered or minimized, reconcile when a window becomes visible, and stop when their last consumer closes.
 
 ### Model catalogs come from installed CLIs
 
-Claude model IDs are extracted from the installed Claude executable. Codex models and supported reasoning levels come from `~/.codex/models_cache.json`. These CLI-owned catalogs are the normal source of truth, with a small fallback list used only when discovery fails.
+The new-agent picker lists Claude model IDs extracted from the installed Claude executable, and Codex models and reasoning levels from `~/.codex/models_cache.json`. These CLI-owned catalogs are the source of truth, with a small fallback list used only when discovery fails.
 
-An optional local proxy exposes Codex models through the Anthropic Messages interface used by Claude Code. It reuses Codex subscription OAuth from `~/.codex/auth.json`. A proxy-backed session can switch between Claude and Codex with `/model`.
+### Glass only where something floats
 
-### Glass is limited to the sidebar
-
-The sidebar uses a behind-window `NSVisualEffectView`. The main canvas is opaque. Earlier builds applied behind-window blur and glass effects to more surfaces; measurement with several large windows showed high WindowServer CPU use, so the effect was reduced to the sidebar.
+The canvas, sidebar and pane cards are opaque. Earlier builds applied behind-window blur to large surfaces, and measurement with several large windows showed high WindowServer CPU use. Translucent material is kept for the small things that float over a terminal: a pane's name capsule and the list of agents in other tabs.
 
 ### Terminal colours are assigned by role
 
@@ -64,11 +56,15 @@ The 16 ANSI slots are painted by role rather than by name, the same palette as F
 
 ### Panes and agent states are drawn by the app
 
-Tabs live in a strip under the terminal, where tmux's status line was, modelled on herdr's tab bar: one row of chips with `+` at the end, drag to reorder, double-click to rename, ⌘1–9 and ⌥⌘←→ to switch. The active chip is a pale pink and moves with a fade; each chip carries the most urgent agent state inside it. The sidebar lists workspaces only. A tab can be split into panes (⌘D right, ⇧⌘D down, ⌘[ / ⌘] to move, ⇧⌘↩ to zoom one). Following herdr's `pane_gaps`, panes do not share divider lines: each becomes its own card on the canvas, with the same gap and corner radius as the sidebar card, and the gap between two cards is the resize handle. The focused card's rim is the accent colour, as the active pane border was in tmux. A pane's name sits at the top of its card; an unsplit tab is drawn exactly as before.
+Terminals run to the bottom of the window. Tabs do not take a row of their own: their chips sit in a notch cut into the bottom-left of the terminal cards, as wide as the chips and no wider, with inner corners rounded and a small flare where the notch meets the card edge. The bottom line a Claude or Codex screen loses to the notch is its status line. Chips follow herdr's tab bar: `+` at the end, drag to reorder, double-click to rename, ⌘1–9 and ⌥⌘←→ to switch. The active chip is a pale pink and moves with a fade; each chip carries the most urgent agent state inside it. The sidebar lists workspaces only.
 
-Agent state comes from `peer --all --json`, read every two seconds while a window is visible. A pane is matched to its agent through the `SM_PANE_ID` its shell receives (peer reports it as `sm:<UUID>`); tmux sessions still running agents are matched by host and session name until they move off tmux. States are told apart by shape as well as colour: a pink exclamation circle waits on you (permission or question), an amber triangle failed, the existing spinner is working, and a plain dot means it finished after you last looked at that pane. Idle panes show nothing. Workspace and tab rows show the most urgent state inside them, and ⌘J jumps to the next pane waiting on you. "Finished but unseen" is remembered by the app, not by peer, and starts empty on launch.
+A matching notch at the bottom right shows the sessions of this workspace that are in a tab you are not looking at (and the panes a zoomed pane hides): harness logos overlap, three at most, then `+N`. Hovering opens the list upward from the notch, with each session's tab; clicking a running one opens a live preview of it above the notch, with a button to go to its tab. A sleeping one is not previewed, because attaching wakes it; clicking it goes to its tab. The list is computed from the layout and peer state, so it costs no polling.
 
-Where the session layer keeps a workspace's layout (`~/.smux/state/sm/workspaces/<ws>.json` on the machine the workspace runs on), the window draws that file instead of a tmux tab: its tabs in the sidebar, its split tree of panes, each pane attached to the session it names. The file is the source; the app reads it (FSEvents locally, one `sm-session watch` per visible remote workspace) and changes it only through `sm-session` commands, the same ones an agent uses (`sm split`, `resize`, `focus`, `zoom`, `close`, `tab select`). Clicks and drags show at once and the command follows; a dragged boundary is previewed on screen and written once on release with `--toward`, so only its two neighbours change. A pane whose agent is still in tmux is labelled `tmux` and can be moved into seol (`sm-session migrate`) while the agent is idle.
+A tab can be split into panes (⌘D right, ⇧⌘D down, ⌘[ / ⌘] to move, ⇧⌘↩ to zoom one). Following herdr's `pane_gaps`, panes do not share divider lines: each becomes its own card on the canvas, with the same gap and corner radius as the sidebar card, and the gap between two cards is the resize handle. The focused card's rim is the accent colour; it keeps its rounded rectangle and slips under a notch rather than bending around it. A pane's name floats in a small capsule at its top-right corner instead of taking a header row. Grab the capsule or the card's top edge and drag: the card follows the pointer, the pane under it lights up, and dropping there swaps the two (`sm swap`); dropping elsewhere springs it back. An unsplit tab has no capsule and is drawn as a plain card. Notch widths, swaps and workspace switches share one critically damped spring; with Reduce Motion they cross-fade.
+
+Agent state comes from `peer --all --json`, read every two seconds while a window is visible. A pane is matched to its agent through the `SM_PANE_ID` its shell receives (peer reports it as `sm:<UUID>`). States are told apart by shape as well as colour: a pink exclamation circle waits on you (permission or question), an amber triangle failed, the existing spinner is working, and a plain dot means it finished after you last looked at that pane. Idle panes show nothing. Workspace and tab rows show the most urgent state inside them, and ⌘J jumps to the next pane waiting on you. "Finished but unseen" is remembered by the app, not by peer, and starts empty on launch.
+
+Where the session layer keeps a workspace's layout (`~/.smux/state/sm/workspaces/<ws>.json` on the machine the workspace runs on), the window draws that file: its tabs in the bottom-left notch, its split tree of panes, each pane attached to the session it names. The file is the source; the app reads it (FSEvents locally, one `sm-session watch` per visible remote workspace) and changes it only through `sm-session` commands, the same ones an agent uses (`sm split`, `resize`, `focus`, `zoom`, `close`, `tab select`). Clicks and drags show at once and the command follows; a dragged boundary is previewed on screen and written once on release with `--toward`, so only its two neighbours change. A pane whose agent is still in tmux is labelled `tmux` and can be moved into seol (`sm-session migrate`) while the agent is idle.
 
 How a pane attaches to its terminal lives in one file, `TerminalAttachment`: a login shell, or `sm-session attach NAME@HOST` for an agent session. The session layer (`sm-session`, a CLI on every machine) starts, keeps, attaches to and revives agent sessions, the work tmux used to do; it picks the local holder or `ssh -t` to the other machine. The `sm` CLI passes `spawn`, `attach`, `resume`, `ls`, `tail`, `stop` and `restore` straight to it, so `sm spawn …` is the same command on every machine.
 
@@ -79,8 +75,6 @@ How a pane attaches to its terminal lives in one file, `TerminalAttachment`: a l
 - macOS 14 or later on Apple Silicon
 - [seol](https://github.com/oesoll/seol), which installs this app, the `sm` CLI and the session layer together
 - Claude Code and/or Codex
-
-Quick conversations run Claude Code, found on your PATH, with `~/cld` as their working directory (created on first use). A local model router is optional.
 
 ### Build from source
 
@@ -113,101 +107,47 @@ billing-api@mac  main*: [lead* | review] · workers: [(w1 | w2) / (w3 | w4)]
 | Shortcut | Action |
 |---|---|
 | `Command-N` | Open a workspace window |
-| `Command-Option-N` | Open a session-based window |
 | `Command-Shift-N` | Add a workspace |
-| `Command-T` | Open a shell tab, or an immediate quick conversation |
+| `Command-T` | Open a tab and pick the agent for it |
 | `Command-D` / `Command-Shift-D` | Split the pane right / down |
 | `Command-J` | Jump to the next pane waiting on you |
 | `Command-Option-Left/Right` | Select the previous or next tab |
 
-### Optional Codex router
-
-The router binds to `127.0.0.1:4141` and is not installed as a service. Start it manually:
-
-```sh
-git clone https://github.com/oesoll/claude-codex-router && cd claude-codex-router
-./scripts/start-background.sh
-```
-
-Stop it with:
-
-```sh
-./scripts/stop.sh
-```
-
-When the router is unavailable, the session-based window keeps the direct Claude model choices and disables proxy-only choices.
-
 ## Remote workspaces
 
-A workspace can point its tmux server at another machine. Set an ssh host
+A workspace can run on another machine. Its layout and its agents' sessions then live on that machine; the sidebar row only says where. Set an ssh host
 alias by clicking the small **computer / server icon** beside a workspace name.
 The icon appears only while its row is selected or hovered. Choose **이 Mac**
 for native macOS work, **아치 · arch** for the Arch computer, or **다른 SSH 호스트…**
 for another configured SSH alias. The same choices are in the context menu under
-**실행 위치**. The CLI remains `sm ws remote <ws> <host>`; `none` selects this Mac.
+**실행 위치**. The CLI remains `sm app ws remote <ws> <host>`; `none` selects this Mac.
 
 Each workspace keeps its own destination, so local Xcode projects and remote agents
-can share the same app window. Changing the destination does not copy project files.
-A missing Mac checkout blocks switching to local and leaves the current tabs connected.
+can share the same app window. Changing the destination does not copy project files;
+the window then draws the layout of the same name on the new machine.
+A missing Mac checkout blocks switching to local.
 Activity dots follow both the project path and its host.
 
-The **+ / New Workspace** sheet also offers **이 Mac / 아치 / 다른 호스트** before
-creating the first tab. Remote folders can be entered as `~/src/project`
-without creating a local copy. The equivalent CLI is
-`sm ws add ~/src/project --name project --host server` (or `--host local`).
+The **+ / New Workspace** sheet also offers **이 Mac / 아치 / 다른 호스트**.
+Remote folders can be entered as `~/src/project` without creating a local copy.
 
-- The tab runs `ssh -t <host>` and attaches to the tmux session of the same
-  name on that host, creating it there when it does not exist. The remote
-  script uses the same cold-boot patience as local tmux so it never steals a
-  session name that `tmux-continuum` is about to restore.
+- An agent pane runs `sm-session attach NAME@HOST`; the session layer reaches the
+  other machine. A shell pane of a remote workspace runs `ssh -t <host>` into the
+  workspace folder there.
 - Paths under the local home are translated to the remote `$HOME`
   (`/Users/me/src/x` → `$HOME/src/x`), so the same folder layout on
   both machines needs no per-workspace configuration. Paths outside the home
   are sent unchanged.
-- Changing the host detaches the workspace's tabs and re-attaches them; tmux
-  sessions on either machine are untouched. Extra tabs retain their IDs, order
-  and tmux session names.
-- Remote workspaces show the host as a small badge in the sidebar and do not
-  need a local tmux install.
 
 The ssh alias comes from `~/.ssh/config`; a `ProxyCommand` that picks the
 route (VPN or LAN) works transparently, and `ControlMaster` keeps reconnects
 cheap.
 
-### Reconnect and Linux session persistence
-
-An interrupted remote tmux connection reconnects after 3 seconds, with failed
-attempts backing off to 30 seconds. An explicit tmux detach and transient shell
-or Quick tabs remain closed. Selecting a disconnected tab, clicking the badge, or
-running `sm tab reconnect <tab>` retries immediately.
-
-While it reconnects, the tab keeps the last frame it received and shows
-`연결 재시도 중…` in the terminal's top-right corner until the new connection
-draws its first output. Keystrokes are dropped during that time so nothing typed
-at the frozen screen reaches tmux after the reconnect. ssh prints "Connection to
-… closed by remote host." straight to the terminal whatever its log level, so
-remote tmux tabs send ssh's own stderr to a per-tab temporary log; the badge
-tooltip shows its last line.
-
-Copying in remote tmux reaches the Mac clipboard through OSC 52 (tmux
-`set-clipboard on` or `external`). The terminal accepts clipboard writes and
-ignores clipboard read requests.
-
-On a Linux host with `tmux-resurrect` installed under `~/.tmux/plugins`, copy
-`scripts/{remote-tmux-persistence.sh,tmux-session-metadata.py,install-remote-tmux-persistence.sh}`
-to the same directory and run the installer there. It adds a user timer that
-saves every minute, a save before server shutdown, and a restore after server
-startup. Saves work without an attached client or a status-right command.
-The companion preserves smux labels and keys. The managed startup waits for
-restoration before any app tab can create a session with a saved name.
-
-Checkpoints live under `~/.smux/state/persistence`. They preserve window and
-pane layouts, working directories and allowlisted Claude/Codex commands; they
-do not checkpoint process memory. Resume an agent with an explicit conversation
-ID to keep that command restorable. Other processes return to a shell after
-reboot. `scripts/sync-remote-tmux-display.py <host>` copies the local smux theme,
-navigation keys and pane numbering, retaining Linux clipboard commands and the
-native save timer. Both home and XDG tmux configuration entry points are covered.
+An agent pane whose attach ends from outside (the Mac slept, ssh dropped) attaches
+again after 3 seconds, backing off to 30. While it does, the pane keeps the last
+frame it received and drops keystrokes, so nothing typed at the frozen screen
+reaches the agent after the reconnect. Attaching again never starts a stopped
+session by itself.
 
 ### Remote activity
 
@@ -235,29 +175,18 @@ it and waits for the socket.
 
 ```text
 sm windows                          창 목록
-sm window new [--quick]             새 창 (워크스페이스/Quick)
+sm window new                       새 창
 sm window focus|close <win>         창 앞으로/닫기
 sm window appearance <win> <light|dark|system>
 
-sm ws [list]                        워크스페이스 목록 (모든 창)
-sm ws add <path> [--name N]         워크스페이스 추가
-sm ws select|delete <ws>            선택(창 앞으로)/삭제
-sm ws rename <ws> <name>            이름 변경 (빈 문자열이면 폴더명)
-sm ws tmux-name <ws> <name>         tmux 세션명
-sm ws remote <ws> <host|none>       원격 호스트 (ssh 별칭) — tmux를 그 머신에서
-sm ws move <ws> <index>             순서 이동
+sm app ws [list]                    사이드바 워크스페이스 목록 (모든 창)
+sm app ws add <path> [--name N]     워크스페이스 추가
+sm app ws select|delete <ws>        선택(창 앞으로)/사이드바에서 빼기(배치와 세션은 남는다)
+sm app ws rename <ws> <name>        이름 변경 (빈 문자열이면 폴더명)
+sm app ws layout-name <ws> <name>   이미 있는 배치(sm ws ls)에 이 항목을 잇는다
+sm app ws remote <ws> <host|none>   실행 위치 (ssh 별칭)
+sm app ws move <ws> <index>         순서 이동
 sm project add|remove <ws> <path>   추가 프로젝트 폴더
-
-sm tabs [ws]                        탭 목록
-sm tab shell|tmux [ws]              탭 추가
-sm tab select|close <tab>           탭 선택/닫기
-sm tab reconnect <tab>              끊어진 연결 재시도 (실행 중 세션 유지)
-sm tab next|prev
-
-sm quick [list] [-n N]              최근 Claude 대화
-sm quick new [--model M] [--effort E] [--proxy] [prompt…]
-sm quick resume <session-id>
-sm quick home
 
 sm reveal NAME[@HOST]               그 에이전트가 보이는 패널을 앞으로(워크스페이스·탭·패널, 키 입력까지).
                                     어느 패널에도 없으면 새 탭에 붙인다. Fine 노치 알림을 누르면 Fine이 부른다
@@ -285,8 +214,8 @@ PaneCaptureTests` (results in `.build/window-capture/tabswitch.json`).
 
 Options: `--json` prints the raw response, `-w/--window <id|index|front>`
 picks the window, `--no-focus` leaves the app in the background. `<ws>` is a
-name, tmux session name, path, or id prefix; `<tab>` is a name, index, or id
-prefix; `<win>` is an index, id prefix, or `front`.
+name, layout name, path, or id prefix; `<win>` is an index, id prefix, or `front`.
+Tabs and panes are the session layer's (`sm tab …`, `sm split …`), the same on every machine.
 
 The protocol is `{"command":"ws.select","args":{"ws":"flat"}}\n` →
 `{"ok":true,"result":{…}}\n` or `{"ok":false,"error":"…"}\n`. The app-side
@@ -296,6 +225,6 @@ command in the same commit.
 ## Credits
 
 - Terminal rendering and input use [libghostty](https://github.com/ghostty-org/ghostty) (MIT). The surface view and its IME handling are adapted from Ghostty's macOS app.
-- Early versions ran agents in tmux and passed messages with the [smux](https://github.com/ShawnPana/smux) skill by [ShawnPana](https://github.com/ShawnPana); SpaceManager itself was first built that way. Plain tmux tabs and remote tmux persistence still use [tmux](https://github.com/tmux/tmux), [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) and [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum).
+- Early versions ran agents in tmux and passed messages with the [smux](https://github.com/ShawnPana/smux) skill by [ShawnPana](https://github.com/ShawnPana); SpaceManager itself was first built that way. Agents adopted from [tmux](https://github.com/tmux/tmux) keep running there until the session layer migrates them.
 
 SpaceManager is released under the [MIT License](LICENSE).

@@ -86,8 +86,10 @@ enum AgentAttention: Int, Comparable {
     var needsSEOL: Bool { self == .blocked || self == .error }
 
     /// peer 상태만으로. 노치가 있으면 PeerDirectory.attention(of:)이 그것을 먼저 본다.
-    static func of(_ agent: PeerAgent) -> AgentAttention {
-        switch agent.state {
+    static func of(_ agent: PeerAgent) -> AgentAttention { of(state: agent.state) }
+
+    static func of(state: PeerState) -> AgentAttention {
+        switch state {
         case .blocked: return .blocked
         case .error: return .error
         case .working: return .working

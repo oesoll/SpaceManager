@@ -18,10 +18,10 @@ Mac app (sm here also draws the layout above; these verbs exist only on the Mac)
                             Post to the notch (same --id updates it). To call SEOL use seol-notch instead.
   sm notch [list] | dismiss ID | open ID | show | hide | status
   sm capture [-w WIN] FILE.png [--rect x,y,w,h]   Picture of an sm window only (never the whole screen)
-  sm windows | sm window new|focus|close WIN | sm tabs [WS]
-  sm quick [list|new|resume ID|home] · sm activity · sm perf … · sm ping
-  sm app ws|tab|state …     The app's older commands (sidebar rename/select/delete/remote, shell/tmux tabs,
-                            window-states dump). `sm ws`/`sm tab` are the session layer's, as on every machine.
+  sm windows | sm window new|focus|close WIN
+  sm activity · sm perf … · sm ping
+  sm app ws|state …         The app's own sidebar commands (rename/select/delete/remote/layout-name, window-states
+                            dump). `sm ws`/`sm tab` are the session layer's, as on every machine.
 
   On the Mac, `sm ws` lists the layouts together with SEOL's sidebar (the --ws value to type and the name SEOL
   uses), `sm ws new NAME [--cwd DIR] [--host arch] [-w WINDOW]` also adds it to the sidebar of that window (default:
@@ -90,8 +90,8 @@ func send(_ command: String, _ args: [String: Any]) throws -> [String: Any] {
 // 전에는 세션 동사를 하나씩 골라 넘겨서 run·cp·state·screen·awake가 "unknown command"였고(pet-1101-8acc),
 // ws·tab·state는 같은 이름의 앱 명령으로 가서 에이전트가 "맥에서는 sm-session ws"라는 예외를 외워야 했다.
 // 그래서 목록을 뒤집었다: 아래 앱 동사가 아니면 전부 세션 층으로 간다. 세션 층에 새 동사가 생겨도 여기를 고칠 일이 없다.
-// 옛 앱 명령(ws add·select…, tab shell·tmux…, state 덤프)은 `sm app …` 아래로 옮겼다.
-let appVerbs: Set<String> = ["app", "windows", "window", "workspaces", "tabs", "project", "quick", "capture", "perf",
+// 옛 앱 명령(ws add·select…, state 덤프)은 `sm app …` 아래로 옮겼다.
+let appVerbs: Set<String> = ["app", "windows", "window", "workspaces", "project", "capture", "perf",
                              "activity", "ping", "notify", "notch", "show", "reveal", "hide", "toggle", "to-fine"]
 let sessionCLI = (NSHomeDirectory() as NSString).appendingPathComponent(".smux/bin/sm-session")
 
@@ -465,16 +465,9 @@ case "ws":
         _ = appCall("ws.select", ["ws": entry.id, "window": entry.window])
         printSidebarOrder(window: entry.window)
         exit(0)
-    case "tmux-name", "remote":
+    case "layout-name", "tmux-name", "remote":
         note("ws \(rest[0])는 앱 명령이다 — 앞으로 sm app ws \(rest[0]) … (이번엔 그대로 한다)")
     default:
-        execLayer(rewriteWorkspaceFlags(argv))
-    }
-case "tab":
-    let sub = verbIndex! + 1 < argv.count ? argv[verbIndex! + 1] : nil
-    if let sub, ["shell", "tmux", "reconnect", "next", "prev"].contains(sub) {
-        note("tab \(sub)는 앱 명령이다 — 앞으로 sm app tab \(sub) … (이번엔 그대로 한다)")
-    } else {
         execLayer(rewriteWorkspaceFlags(argv))
     }
 case let v? where appVerbs.contains(v):
@@ -494,7 +487,6 @@ while i < argv.count {
     case "--json": wantJSON = true
     case "--no-focus": noFocus = true
     case "-w", "--window": i += 1; windowArg = i < argv.count ? argv[i] : nil
-    case "--quick", "--proxy": flags[String(a.dropFirst(2))] = "true"
     case "--name", "--host", "--model", "--effort", "-n", "--limit", "--rect", "--burst", "--every", "--do",
          "--title", "--state", "--id", "--source", "--workspace":
         i += 1; flags[a.hasPrefix("--") ? String(a.dropFirst(2)) : "limit"] = i < argv.count ? argv[i] : ""
@@ -520,7 +512,7 @@ do {
     switch (group, sub) {
     case ("ping", _): command = "ping"
     case ("windows", _): command = "windows.list"
-    case ("window", "new"): command = "window.new"; if flags["quick"] != nil { args["kind"] = "quick" }
+    case ("window", "new"): command = "window.new"
     case ("window", "focus"), ("window", "close"):
         command = "window.\(sub!)"; args["window"] = try need(1, "sm window \(sub!) <win>")[0]
     case ("window", "appearance"):
@@ -532,22 +524,12 @@ do {
         if let host = flags["host"] { args["host"] = host }
     case ("ws", "select"), ("ws", "delete"): command = "ws.\(sub!)"; args["ws"] = try need(1, "sm ws \(sub!) <ws>")[0]
     case ("ws", "rename"): let a = try need(1, "sm ws rename <ws> <name>"); command = "ws.rename"; args["ws"] = a[0]; args["name"] = a.count > 1 ? a[1] : ""
-    case ("ws", "tmux-name"): let a = try need(1, "sm ws tmux-name <ws> <name>"); command = "ws.tmuxName"; args["ws"] = a[0]; args["name"] = a.count > 1 ? a[1] : ""
+    case ("ws", "layout-name"), ("ws", "tmux-name"):
+        let a = try need(1, "sm app ws layout-name <ws> <name>"); command = "ws.layoutName"; args["ws"] = a[0]; args["name"] = a.count > 1 ? a[1] : ""
     case ("ws", "remote"): let a = try need(2, "sm ws remote <ws> <host|none>"); command = "ws.remote"; args["ws"] = a[0]; args["host"] = a[1]
     case ("ws", "move"): let a = try need(2, "sm ws move <ws> <index>"); command = "ws.move"; args["ws"] = a[0]; args["index"] = Int(a[1]) ?? 0
     case ("project", "add"), ("project", "remove"):
         let a = try need(2, "sm project \(sub!) <ws> <path>"); command = "project.\(sub!)"; args["ws"] = a[0]; args["path"] = a[1]
-    case ("tabs", _): command = "tab.list"; if let s = sub { args["ws"] = s }
-    case ("tab", "list"): command = "tab.list"; if let w = rest.first { args["ws"] = w }
-    case ("tab", "shell"), ("tab", "tmux"): command = "tab.\(sub!)"; if let w = rest.first { args["ws"] = w }
-    case ("tab", "select"), ("tab", "close"), ("tab", "reconnect"): command = "tab.\(sub!)"; args["tab"] = try need(1, "sm tab \(sub!) <tab>")[0]
-    case ("tab", "next"), ("tab", "prev"): command = "tab.\(sub!)"
-    case ("quick", nil), ("quick", "list"): command = "quick.list"; args["limit"] = Int(flags["limit"] ?? "30") ?? 30
-    case ("quick", "new"):
-        command = "quick.new"; let prompt = rest.joined(separator: " "); if !prompt.isEmpty { args["prompt"] = prompt }
-        if let m = flags["model"] { args["model"] = m }; if let e = flags["effort"] { args["effort"] = e }; if flags["proxy"] != nil { args["proxy"] = true }
-    case ("quick", "resume"): command = "quick.resume"; args["id"] = try need(1, "sm quick resume <session-id>")[0]
-    case ("quick", "home"): command = "quick.home"
     case ("capture", _):
         command = "window.capture"
         if let path = sub { args["path"] = (path as NSString).expandingTildeInPath.hasPrefix("/") ? (path as NSString).expandingTildeInPath : FileManager.default.currentDirectoryPath + "/" + path }
@@ -653,17 +635,9 @@ func render(command: String, result: Any) -> String {
         return str((result as? [String: Any])?["id"])
     case "ws.list", "ws.move":
         let rows = (result as? [[String: Any]] ?? []).map { w in
-            [str(w["selected"]) == "yes" ? "*" : "", str(w["name"]), str(w["tmuxSession"]), str(w["remoteHost"]).isEmpty ? "local" : "@" + str(w["remoteHost"]), home(str(w["rootPath"])), short(w["window"])]
+            [str(w["selected"]) == "yes" ? "*" : "", str(w["name"]), str(w["layout"]).isEmpty ? str(w["tmuxSession"]) : str(w["layout"]), str(w["remoteHost"]).isEmpty ? "local" : "@" + str(w["remoteHost"]), home(str(w["rootPath"])), short(w["window"])]
         }
-        return table([["", "name", "tmux", "host", "path", "win"]] + rows)
-    case "tab.list":
-        let rows = (result as? [[String: Any]] ?? []).enumerated().map { i, t in
-            [String(i), str(t["selected"]) == "yes" ? "*" : "", str(t["kind"]), str(t["name"]), str(t["remoteHost"]).isEmpty ? "" : "@" + str(t["remoteHost"]), str(t["reconnecting"]) == "yes" ? "reconnecting" : str(t["running"]) == "yes" ? "running" : "idle", short(t["id"])]
-        }
-        return table([["#", "", "kind", "name", "host", "state", "id"]] + rows)
-    case "quick.list":
-        let rows = (result as? [[String: Any]] ?? []).map { c in [str(c["id"]), String(str(c["modifiedAt"]).prefix(16)), str(c["title"])] }
-        return table([["session-id", "modified", "title"]] + rows)
+        return table([["", "name", "layout", "host", "path", "win"]] + rows)
     case "activity.list":
         guard let dict = result as? [String: Any] else { return "\(result)" }
         let rows = (dict["sessions"] as? [[String: Any]] ?? []).map { s in [str(s["provider"]), String(str(s["lastActivity"]).prefix(16)), home(str(s["cwd"])), String(str(s["snippet"]).prefix(60))] }

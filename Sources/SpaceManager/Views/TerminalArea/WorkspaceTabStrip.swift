@@ -1,7 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 탭 막대. 탭은 사이드바가 아니라 터미널 아래에서 오간다 — tmux 상태줄이 있던 자리다(SEOL 10/31).
+/// 탭 막대. 탭은 사이드바가 아니라 터미널 아래에서 오간다(SEOL 10/31). 11/15부터 아래 한 줄을 다 쓰지 않고
+/// 칩이 놓인 자리만 터미널 카드에서 파낸 노치 안에 선다(`BottomNotch`).
 ///
 /// herdr의 탭 막대(client/shell/tabs.rs)를 sm의 말로 옮겼다: 한 줄의 칩, 이름 양옆 여백, 칩 사이 한 칸,
 /// 끝에 `+`, 끌어서 순서 바꾸기, 넘치면 옆으로 민다. herdr는 활성 탭을 강조색으로 꽉 채우지만, sm은 분홍을
@@ -30,8 +31,11 @@ struct WorkspaceTabStrip: View {
     var onMove: ((String, Int) -> Void)?
     var onMoveToFine: ((String) -> Void)?
     let onNew: () -> Void
+    /// 칩이 이보다 길면 옆으로 민다. 노치는 칩만큼만 넓어진다(`BottomNotch`).
+    var maxWidth: CGFloat = .infinity
 
     @State private var dragging: String?
+    @State private var contentWidth: CGFloat = 0
     @State private var dropIndex: Int?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -67,7 +71,13 @@ struct WorkspaceTabStrip: View {
                 .padding(.horizontal, 2)
                 // 탭이 생기고 닫히고 자리를 바꾸면 이웃 칩이 미끄러져 자리를 내준다(튀지 않는 스프링).
                 .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 1.0), value: items.map(\.id))
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                    if reduceMotion { contentWidth = width } else {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 1.0)) { contentWidth = width }
+                    }
+                }
             }
+            .frame(width: contentWidth > 0 ? min(contentWidth, maxWidth) : nil)
             .onChange(of: items.first(where: \.isActive)?.id) { _, active in
                 // herdr처럼 활성 탭이 보이게 민다.
                 if let active { withAnimation(.easeInOut(duration: 0.2)) { scroller.scrollTo(active, anchor: .center) } }

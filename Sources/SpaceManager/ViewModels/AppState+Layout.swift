@@ -29,6 +29,10 @@ final class LayoutInteraction: ObservableObject {
     /// 명령을 보낸 뒤 그 결과(version)가 오기 전까지 이 탭을 이 모양으로 그린다(끌기를 놓은 직후 등).
     @Published var rootOverride: (key: String, tab: String, root: LayoutNode, until: Int)?
 
+    /// 배치가 없는 워크스페이스에 배치를 만드는 중이거나 못 만든 것(키: 배치 키).
+    enum Creation: Equatable { case inProgress, failed(String) }
+    @Published var layoutCreation: [String: Creation] = [:]
+
     static func tabKey(_ layout: WorkspaceLayout, _ tab: String) -> String {
         LayoutDirectory.key(workspace: layout.workspace, host: layout.host) + "/" + tab
     }
@@ -49,11 +53,11 @@ final class LayoutTerminals {
         if let make = makeSession {
             session = make(paneID, pane, layout, workspace)
         } else if let agent = pane?.agent(layoutHost: layout.host) {
-            session = TerminalSession(kind: .shell, name: agent.name, workingDirectory: workspace.rootPath,
+            session = TerminalSession(name: agent.name, workingDirectory: workspace.rootPath,
                                       attachment: .agent(name: agent.name, host: agent.host, agent: nil))
         } else {
             // 세션이 없는 셸 패널. 원격 워크스페이스면 그 기기의 셸이다.
-            session = TerminalSession(kind: .shell, name: TerminalSession.defaultShellName(remoteHost: workspace.remoteHost),
+            session = TerminalSession(name: TerminalSession.defaultShellName(remoteHost: workspace.remoteHost),
                                       workingDirectory: workspace.rootPath, remoteHost: workspace.remoteHost)
         }
         session.layoutPane = (paneID, layout.workspace)
@@ -143,7 +147,7 @@ extension AppState {
     /// 이 워크스페이스의 배치 키("워크스페이스@기기"). 배치 이름은 tmux 세션 이름과 같다(옮겨 적을 때 그대로 썼다).
     func layoutKey(for workspace: Workspace) -> String {
         let host = sessionHost(for: workspace) ?? PeerDirectory.shared.localHostName
-        return LayoutDirectory.key(workspace: workspace.effectiveTmuxSessionName, host: host)
+        return LayoutDirectory.key(workspace: workspace.effectiveLayoutName, host: host)
     }
 
     func layout(for workspace: Workspace, directory: LayoutDirectory = .shared) -> WorkspaceLayout? {
@@ -154,9 +158,32 @@ extension AppState {
         selectedWorkspace.flatMap { layout(for: $0) }
     }
 
+    /// 배치가 없는 워크스페이스에 셸 탭 하나짜리 배치를 만든다(`sm ws new NAME@HOST`). tmux 메인 탭이 하던
+    /// 출발점이다. 사이드바 항목은 이미 있으니 세션 층이 앱에 알리지 않게(`--no-app`) 한다.
+    /// 이미 있다는 답은 실패가 아니다 — 원격 watch가 4초 안에 첫 줄을 못 보낸 경우다. 곧 그 배치가 온다.
+    func createLayout(for workspace: Workspace, retry: Bool = false) {
+        let key = layoutKey(for: workspace)
+        if let state = layoutInteraction.layoutCreation[key] {
+            guard retry, case .failed = state else { return }
+        }
+        guard LayoutDirectory.shared.layouts[key] == nil else { return }
+        layoutInteraction.layoutCreation[key] = .inProgress
+        let host = sessionHost(for: workspace)
+        let name = workspace.effectiveLayoutName + (host.map { "@" + $0 } ?? "")
+        let cwd = workspace.isRemote ? workspace.remoteDirectoryPath : workspace.rootPath
+        SessionLayer.run(["ws", "new", name, "--cwd", cwd, "--no-app", "--json"]) { result in
+            if case .failure(let failure) = result, !failure.message.contains("workspace exists") {
+                self.layoutInteraction.layoutCreation[key] = .failed(failure.message)
+                return
+            }
+            LayoutDirectory.shared.reloadLocal()
+        }
+    }
+
     /// 파일이 따라잡은 임시 상태를 걷는다(포커스·탭).
     func settleLayoutOverrides(_ layout: WorkspaceLayout) {
         let key = LayoutDirectory.key(workspace: layout.workspace, host: layout.host)
+        if layoutInteraction.layoutCreation[key] != nil { layoutInteraction.layoutCreation[key] = nil }
         if let held = layoutInteraction.focusOverride, held.key == key, layout.tab(containing: held.pane)?.focus == held.pane {
             layoutInteraction.focusOverride = nil
         }
@@ -231,6 +258,16 @@ extension AppState {
         let root = tab.root.resizing(path: boundary.path, sizes: sizes)
         layoutInteraction.rootOverride = (LayoutInteraction.tabKey(layout, tab.id), tab.id, root, layout.version + 1)
         runLayoutCommand(args, layout: layout) { result in
+            if case .failure = result { self.layoutInteraction.rootOverride = nil }
+        }
+    }
+
+    /// 끌어 놓은 두 패널의 자리를 바꾼다. 바꾼 모양을 결과가 올 때까지 먼저 그린다(놓자마자 새 자리로 미끄러지게).
+    func swapLayoutPanes(_ a: String, _ b: String, tab: WorkspaceLayout.Tab, in layout: WorkspaceLayout) {
+        guard a != b else { return }
+        let root = tab.root.swappingPanes(a, b)
+        layoutInteraction.rootOverride = (LayoutInteraction.tabKey(layout, tab.id), tab.id, root, layout.version + 1)
+        runLayoutCommand(["swap", a, b], layout: layout) { result in
             if case .failure = result { self.layoutInteraction.rootOverride = nil }
         }
     }
@@ -384,22 +421,14 @@ extension AppState {
         runLayoutCommand(["tab", "move", tab, String(index)], layout: layout)
     }
 
-    /// ⌘1…9, ⌥⌘←→. 배치가 있으면 배치의 탭을, 없으면 지금까지의 탭을 오간다.
+    /// ⌘1…9, ⌥⌘←→: 배치의 탭을 오간다.
     func selectTab(at index: Int) {
-        if let layout = selectedLayout {
-            guard layout.tabs.indices.contains(index) else { return }
-            selectLayoutTab(layout.tabs[index].id, in: layout)
-        } else if sessions.indices.contains(index) {
-            selectSession(sessions[index])
-        }
+        guard let layout = selectedLayout, layout.tabs.indices.contains(index) else { return }
+        selectLayoutTab(layout.tabs[index].id, in: layout)
     }
 
     func stepTab(forward: Bool) {
-        guard let layout = selectedLayout else {
-            forward ? selectNextSession() : selectPreviousSession()
-            return
-        }
-        guard !layout.tabs.isEmpty, let current = displayedTab(of: layout),
+        guard let layout = selectedLayout, !layout.tabs.isEmpty, let current = displayedTab(of: layout),
               let index = layout.tabs.firstIndex(where: { $0.id == current.id }) else { return }
         let next = (index + (forward ? 1 : layout.tabs.count - 1)) % layout.tabs.count
         selectLayoutTab(layout.tabs[next].id, in: layout)
@@ -456,7 +485,7 @@ extension AppState {
     /// 창이 화면에 실제로 보이지 않으면(sm을 숨김, 최소화, 다른 창에 완전히 가려짐) 아무것도 보이지 않는 것이다.
     func displayedLayoutPanes(directory: LayoutDirectory = .shared, window: NSWindow? = nil) -> Set<String> {
         if let window, !window.occlusionState.contains(.visible) { return [] }
-        guard windowKind == .workspace, let workspace = selectedWorkspace,
+        guard let workspace = selectedWorkspace,
               let layout = layout(for: workspace, directory: directory), let tab = displayedTab(of: layout) else { return [] }
         let prefix = LayoutDirectory.key(workspace: layout.workspace, host: layout.host) + "/"
         return Set(tab.root.paneIDs.map { prefix + $0 })
@@ -523,5 +552,53 @@ extension AppState {
         guard let target = candidates.first(where: { $0.pane != current }) ?? candidates.first else { return }
         // focus는 그 패널의 탭도 함께 앞으로 꺼낸다(세션 층의 focus가 active_tab을 바꾼다).
         focusLayoutPane(target.pane, in: layout)
+    }
+}
+
+/// 오른쪽 노치에 오르는 세션 하나: SEOL이 연 탭에 있지만 지금 화면에 없는 패널의 세션(SEOL 11/15).
+struct ShelfAgent: Identifiable, Equatable {
+    let name: String
+    let host: String
+    /// claude | codex | …(peer가 아는 하니스). peer 행이 없으면(잠든 세션) 빈 값.
+    let kind: String
+    let attention: AgentAttention
+    /// 지금 상태가 된 때(peer).
+    let since: Date?
+    /// 도는 중인가(peer 행이 살아 있다). 잠든 세션은 미리보기로 열면 깨어나므로 미리보기 대신 그 탭으로 간다.
+    let isRunning: Bool
+    let tabID: String
+    let tabName: String
+    let pane: String
+
+    var id: String { pane }
+}
+
+extension AppState {
+    /// 이 배치에서 지금 화면에 없는 세션 패널: 보이지 않는 탭의 패널, 그리고 지금 탭이 한 패널을 확대 중이면 가려진
+    /// 나머지. 배치와 peer 목록만으로 계산한다(세션 층을 부르지 않는다). 급한 것이 앞, 같으면 탭 순서.
+    func hiddenAgents(in layout: WorkspaceLayout, directory: PeerDirectory) -> [ShelfAgent] {
+        let shown = displayedTab(of: layout)
+        var rows: [(ShelfAgent, Int)] = []
+        for (order, tab) in layout.tabs.enumerated() {
+            let panes = tab.root.paneIDs
+            let hidden: [String]
+            if tab.id == shown?.id {
+                guard let zoom = tab.zoom, panes.contains(zoom) else { continue }
+                hidden = panes.filter { $0 != zoom }
+            } else {
+                hidden = panes
+            }
+            for pane in hidden {
+                guard let (name, host) = layout.agent(inPane: pane) else { continue }
+                let live = directory.agents.first { $0.name == name && $0.host == host && !$0.isStale }
+                let attention = live.map(directory.attention(of:)) ?? .gone
+                rows.append((ShelfAgent(name: name, host: host, kind: live?.kind ?? "", attention: attention,
+                                        since: live?.since, isRunning: live != nil && attention != .gone,
+                                        tabID: tab.id, tabName: tab.name, pane: pane), order))
+            }
+        }
+        return rows.sorted { lhs, rhs in
+            lhs.0.attention != rhs.0.attention ? lhs.0.attention > rhs.0.attention : lhs.1 < rhs.1
+        }.map(\.0)
     }
 }

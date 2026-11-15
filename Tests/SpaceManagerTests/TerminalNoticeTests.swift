@@ -51,7 +51,7 @@ final class TerminalNoticeTests: XCTestCase {
         try "#!/bin/sh\nsleep 0.5; printf '\\033]9;빌드가 끝났어요\\007'; exec sleep 60\n".write(to: fake, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
         defer { try? FileManager.default.removeItem(at: fake) }
-        let session = TerminalSession(kind: .shell, name: "qa", workingDirectory: NSHomeDirectory(),
+        let session = TerminalSession(name: "qa", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "qa", host: "arch-elsewhere", agent: nil))
         let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 400, height: 120), styleMask: [.titled],
                               backing: .buffered, defer: false)

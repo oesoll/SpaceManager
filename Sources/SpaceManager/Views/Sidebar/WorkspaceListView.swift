@@ -85,18 +85,18 @@ struct WorkspaceListView: View {
                                 appState.renameWorkspace(workspace, to: input.stringValue.isEmpty ? nil : input.stringValue)
                             }
                         }
-                        Button("Edit tmux Session Name...") {
+                        Button("배치 이름…") {
                             let alert = NSAlert()
-                            alert.messageText = "tmux 세션명"
-                            alert.informativeText = "비워두면 이름에서 자동 파생됩니다. 현재: \(workspace.effectiveTmuxSessionName)"
+                            alert.messageText = "배치 이름"
+                            alert.informativeText = "이미 있는 배치(sm ws ls)에 이 항목을 잇습니다. 비워두면 이름에서 파생됩니다. 현재: \(workspace.effectiveLayoutName)"
                             alert.addButton(withTitle: "저장")
                             alert.addButton(withTitle: "취소")
                             let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 22))
-                            input.stringValue = workspace.tmuxSessionName ?? ""
-                            input.placeholderString = workspace.effectiveTmuxSessionName
+                            input.stringValue = workspace.layoutName ?? ""
+                            input.placeholderString = workspace.effectiveLayoutName
                             alert.accessoryView = input
                             if alert.runModal() == .alertFirstButtonReturn {
-                                appState.setTmuxSessionName(workspace, to: input.stringValue)
+                                appState.setLayoutName(workspace, to: input.stringValue)
                             }
                         }
                         Menu("실행 위치") {
@@ -116,11 +116,6 @@ struct WorkspaceListView: View {
                                     }
                                 }
                             }
-                        }
-                        Divider()
-                        Button("새 셸 탭") { appState.selectWorkspace(workspace); appState.addShellTab() }
-                        if TmuxBootstrap.isTmuxAvailable {
-                            Button("새 tmux 탭") { appState.selectWorkspace(workspace); appState.addTmuxTab() }
                         }
                         Divider()
                         Button("Delete", role: .destructive) {
@@ -304,116 +299,6 @@ struct WorkspaceActivityDot: View {
         let minutes = Int(-lastConversation.timeIntervalSinceNow) / 60
         let when = minutes < 1 ? "방금" : minutes < 60 ? "\(minutes)분 전" : "\(minutes / 60)시간 전"
         return isGenerating ? "에이전트 응답 생성 중 · 마지막 대화 \(when)" : "마지막 대화 \(when)"
-    }
-}
-
-/// 배치 데이터의 탭 행. 모양은 아래 WorkspaceTabRow와 같고, 닫기는 없다(탭은 세션 층 명령으로 닫는다).
-struct LayoutTabRow: View {
-    let name: String
-    let isSelected: Bool
-    var attention: AgentAttention?
-    let onSelect: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(name)
-                .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
-                .foregroundColor(Color(isSelected ? Chrome.textPrimary : Chrome.textSecondary))
-                .lineLimit(1)
-            Spacer(minLength: 0)
-            if let attention, attention >= .working {
-                AgentStateMark(attention: attention)
-                    .help(AgentStateMark.spokenName(attention))
-            }
-        }
-        .frame(height: Sidebar.tabRowHeight)
-        .padding(.leading, Sidebar.listInset + Sidebar.iconFrame + 6)
-        .padding(.trailing, 4 + 14)
-        .background {
-            if isHovering && !isSelected {
-                RoundedRectangle(cornerRadius: Sidebar.listCornerRadius, style: .continuous)
-                    .fill(Color(Chrome.hover))
-            }
-        }
-        .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
-        .onTapGesture(perform: onSelect)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(name)
-        .accessibilityValue(isSelected ? "Selected" : "")
-    }
-}
-
-/// 워크스페이스 하위 탭 행 (폴더링 목록의 항목). 이름은 워크스페이스 이름과 같은 세로줄에서
-/// 시작한다. 정상(실행 중)은 아무 표시도 없고, 재연결·종료처럼 손이 갈 상태만 점으로 남긴다.
-struct WorkspaceTabRow: View {
-    @ObservedObject var session: TerminalSession
-    let isSelected: Bool
-    var attention: AgentAttention?
-    let onSelect: () -> Void
-    let onClose: () -> Void
-    @State private var isHovering = false
-
-    /// 메인 탭은 워크스페이스의 고정 앵커라 닫아도 다음 방문에 재생성된다 —
-    /// 닫히는 척만 하는 ×를 보여주느니 처음부터 닫기 대상에서 제외한다.
-    private var isClosable: Bool { session.kind != .tmuxMain }
-
-    private var statusColor: Color? {
-        if session.isReconnecting { return .reconnectAmber }
-        if !session.isRunning { return Color(Chrome.textTertiary) }
-        return nil
-    }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(session.name)
-                .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
-                .foregroundColor(Color(isSelected ? Chrome.textPrimary : Chrome.textSecondary))
-                .lineLimit(1)
-
-            Spacer(minLength: 0)
-
-            if let statusColor {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 5, height: 5)
-                    .help(session.isReconnecting ? "재연결 중" : "종료됨")
-            } else if let attention, attention >= .working {
-                AgentStateMark(attention: attention)
-                    .help(AgentStateMark.spokenName(attention))
-            }
-
-            // 자리를 항상 확보하고 투명도로만 나타낸다 — 호버 때 요소가 끼어들면
-            // 텍스트가 밀리며 목록이 출렁인다
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(Color(Chrome.textTertiary))
-                    .frame(width: 14, height: 14)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Close Tab")
-            .opacity(isClosable && isHovering ? 1 : 0)
-            .allowsHitTesting(isClosable && isHovering)
-        }
-        .frame(height: Sidebar.tabRowHeight)
-        // 워크스페이스 이름과 같은 세로줄에서 시작한다(행 여백 + 아이콘 칸 + 간격).
-        .padding(.leading, Sidebar.listInset + Sidebar.iconFrame + 6)
-        .padding(.trailing, 4)
-        .background {
-            if isHovering && !isSelected {
-                RoundedRectangle(cornerRadius: Sidebar.listCornerRadius, style: .continuous)
-                    .fill(Color(Chrome.hover))
-            }
-        }
-        .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
-        .onTapGesture(perform: onSelect)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(session.name)
-        .accessibilityValue(isSelected ? "Selected" : "")
     }
 }
 

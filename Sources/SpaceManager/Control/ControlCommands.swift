@@ -54,7 +54,7 @@ enum ControlCommands {
             return describe(entry)
 
         case "ws.list":
-            let targets = r.string("window") == nil ? liveWindows().filter { $0.state.windowKind == .workspace } : [try window(r)]
+            let targets = r.string("window") == nil ? liveWindows() : [try window(r)]
             return targets.flatMap { entry in entry.state.workspaces.map { describe($0, in: entry) } }
 
         case "ws.add":
@@ -68,7 +68,7 @@ enum ControlCommands {
             let layoutName = r.string("layout")
             // 같은 배치를 이미 보여 주는 워크스페이스가 있으면 하나 더 만들지 않는다(에이전트가 두 번 불러도 그대로).
             if let layoutName, let existing = liveWindows().lazy.compactMap({ entry in
-                entry.state.workspaces.first { $0.effectiveTmuxSessionName == layoutName && ($0.remoteHost ?? "") == host }
+                entry.state.workspaces.first { $0.effectiveLayoutName == layoutName && ($0.remoteHost ?? "") == host }
                     .map { (entry, $0) }
             }).first {
                 return describe(existing.1, in: existing.0).merging(["existed": true]) { $1 }
@@ -94,9 +94,9 @@ enum ControlCommands {
             if r.bool("focus") ?? true { focus(entry) }
             return describe(try refetch(ws, in: entry), in: entry)
 
-        case "ws.tmuxName":
+        case "ws.layoutName", "ws.tmuxName":
             let (entry, ws) = try workspace(r)
-            entry.state.setTmuxSessionName(ws, to: r.string("name") ?? "")
+            entry.state.setLayoutName(ws, to: r.string("name") ?? "")
             return describe(try refetch(ws, in: entry), in: entry)
 
         case "ws.remote":
@@ -118,7 +118,6 @@ enum ControlCommands {
             let (entry, ws) = try workspace(r)
             guard let to = r.string("to"), !to.isEmpty else { throw fail("to required") }
             let target = try window(query: to)
-            guard target.state.windowKind == .workspace else { throw fail("window \(to) is not a workspace window") }
             if target.state !== entry.state { entry.state.transferWorkspace(ws, to: target.state) }
             return describe(ws, in: target)
 
@@ -139,55 +138,6 @@ enum ControlCommands {
             entry.state.selectWorkspace(ws)
             entry.state.removeProject(project)
             return describe(try refetch(ws, in: entry), in: entry)
-
-        case "tab.list":
-            let (entry, ws) = try workspaceOrSelected(r)
-            return entry.state.sessions(for: ws).map { describe($0, selected: entry.state.selectedSession?.id == $0.id) }
-
-        case "tab.shell", "tab.tmux":
-            let (entry, ws) = try workspaceOrSelected(r)
-            entry.state.selectWorkspace(ws)
-            if r.command == "tab.shell" { entry.state.addShellTab() } else { entry.state.addTmuxTab() }
-            guard let session = entry.state.selectedSession else { throw fail("tab not created") }
-            return describe(session, selected: true)
-
-        case "tab.select", "tab.close", "tab.reconnect":
-            let (entry, workspace, session) = try tab(r)
-            if r.command == "tab.reconnect" {
-                session.reconnectIfNeeded()
-                return describe(session, selected: entry.state.selectedSession?.id == session.id)
-            }
-            if r.command == "tab.select" {
-                // 다른 워크스페이스의 탭이면 그 워크스페이스로 먼저 옮긴다 (같은 세션 객체가 복원된다).
-                if let workspace, entry.state.selectedWorkspace?.id != workspace.id {
-                    entry.state.selectWorkspace(workspace)
-                }
-                entry.state.selectSession(session)
-                if r.bool("focus") ?? true { focus(entry) }
-                return describe(session, selected: true)
-            }
-            guard session.kind != .tmuxMain else { throw fail("main tmux tab cannot be closed (it is recreated on next visit)") }
-            entry.state.removeSession(session)
-            return ["closed": session.id.uuidString]
-
-        case "tab.next", "tab.prev":
-            let entry = try window(r)
-            if r.command == "tab.next" { entry.state.selectNextSession() } else { entry.state.selectPreviousSession() }
-            guard let session = entry.state.selectedSession else { throw fail("no tabs") }
-            return describe(session, selected: true)
-
-        case "quick.list":
-            let limit = r.int("limit") ?? 30
-            let dir = QuickConversationScanner.defaultTranscriptsDirectory()
-            let titles = QuickConversationScanner.scanAITitles(directory: dir)
-            return QuickConversationScanner.scan(directory: dir).prefix(limit).map { c in
-                ["id": c.id, "title": titles[c.id] ?? c.aiTitle ?? c.title, "modifiedAt": iso(c.modifiedAt), "transcript": c.transcriptURL.path]
-            }
-
-        case "quick.home":
-            let entry = try quickWindow(r)
-            entry.state.showQuickHome()
-            return describe(entry)
 
         case "activity.list":
             let scanner = RecentActivityScanner.shared
@@ -215,7 +165,7 @@ enum ControlCommands {
             let data = try JSONEncoder.pretty.encode(WorkspaceStorage.shared.windowStates)
             return try JSONSerialization.jsonObject(with: data)
 
-        case "quick.new", "quick.resume", "window.new", "window.capture", "perf.frames", "perf.keys", "session.reveal":
+        case "window.new", "window.capture", "perf.frames", "perf.keys", "session.reveal":
             throw fail("internal: async command reached sync dispatcher")
         default:
             throw fail("unknown command: \(r.command)")
@@ -294,7 +244,7 @@ enum ControlCommands {
                 let onOwner = found["workspace"] is String
                 let key = LayoutDirectory.key(workspace: layoutWorkspace, host: onOwner ? host : elsewhere?.layout.host ?? host)
                 // 그 워크스페이스를 이미 보여 주는 창 → 앞에 있는 창 → 그 워크스페이스를 가진 아무 창.
-                let windows = liveWindows().filter { $0.state.windowKind == .workspace }
+                let windows = liveWindows()
                 let holding = windows.compactMap { entry in
                     entry.state.workspaces.first { entry.state.layoutKey(for: $0) == key }.map { (entry, $0) }
                 }
@@ -329,8 +279,7 @@ enum ControlCommands {
         }
         switch r.command {
         case "window.new":
-            let kind: WindowKind = (r.string("kind") ?? "workspace") == "quick" ? .quick : .workspace
-            openWindow(kind: kind) { result in
+            openWindow { result in
                 completion(result.map { .ok(describe($0)) } ?? .error("window did not appear"))
             }
             return true
@@ -416,34 +365,12 @@ enum ControlCommands {
             FrameProbe.run(window: nsWindow, seconds: seconds, action: action, watch: watch) { completion(.ok($0)) }
             return true
 
-        case "quick.new", "quick.resume":
-            let configuration = try quickConfiguration(r)
-            let run: (WindowEntry) -> Void = { entry in
-                if r.command == "quick.resume" {
-                    guard let id = r.string("id") else { completion(.error("id required")); return }
-                    entry.state.resumeQuickConversation(sessionId: id)
-                } else {
-                    entry.state.addQuickSession(initialPrompt: r.string("prompt"), configuration: configuration)
-                }
-                if r.bool("focus") ?? true { focus(entry) }
-                guard let session = entry.state.selectedSession else { completion(.error("session not created")); return }
-                completion(.ok(describe(session, selected: true)))
-            }
-            if let entry = try? quickWindow(r) {
-                run(entry)
-            } else {
-                openWindow(kind: .quick) { entry in
-                    guard let entry else { completion(.error("could not open quick window")); return }
-                    run(entry)
-                }
-            }
-            return true
         default:
             return nil
         }
     }
 
-    /// `sm perf --do`: 사람이 누르는 것과 같은 길(⌘숫자, ⌥⌘←→, ⌘[ ⌘], 사이드바 클릭)로 한 번 움직인다.
+    /// `sm perf --do`:사람이 누르는 것과 같은 길(⌘숫자, ⌥⌘←→, ⌘[ ⌘], 사이드바 클릭)로 한 번 움직인다.
     private static func probeAction(_ spec: String, state: AppState) throws -> () -> Void {
         let parts = spec.split(separator: ":", maxSplits: 1).map(String.init)
         let verb = parts.first ?? "", value = parts.count > 1 ? parts[1] : ""
@@ -456,7 +383,7 @@ enum ControlCommands {
         case ("focus", "next"): return { state.cyclePane(forward: true) }
         case ("focus", "prev"): return { state.cyclePane(forward: false) }
         case ("ws", _):
-            guard let workspace = state.workspaces.first(where: { $0.name == value || $0.tmuxSessionName == value }) else {
+            guard let workspace = state.workspaces.first(where: { $0.name == value || $0.layoutName == value }) else {
                 throw fail("no workspace named \(value) in this window")
             }
             return { state.selectWorkspace(workspace) }
@@ -465,15 +392,15 @@ enum ControlCommands {
         }
     }
 
-    private static func openWindow(kind: WindowKind, completion: @escaping (WindowEntry?) -> Void) {
+    private static func openWindow(completion: @escaping (WindowEntry?) -> Void) {
         guard let open = WindowOpener.open else { completion(nil); return }
         let before = Set(liveWindows().map { $0.state.windowStateId })
         let id = UUID()
-        open(kind.sceneID, id)
+        open("main", id)
         NSApp.activate(ignoringOtherApps: true)
         var attempts = 0
         func poll() {
-            if let entry = liveWindows().first(where: { $0.state.windowStateId == id || (!before.contains($0.state.windowStateId) && $0.state.windowKind == kind) }) {
+            if let entry = liveWindows().first(where: { $0.state.windowStateId == id || !before.contains($0.state.windowStateId) }) {
                 completion(entry); return
             }
             attempts += 1
@@ -481,22 +408,6 @@ enum ControlCommands {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: poll)
         }
         poll()
-    }
-
-    private static func quickConfiguration(_ r: ControlRequest) throws -> QuickSessionConfiguration {
-        let base = QuickComposerPreferences.load()
-        var effort = base.effort
-        if let raw = r.string("effort") {
-            guard let parsed = QuickEffort(rawValue: raw) else {
-                throw fail("effort must be one of \(QuickEffort.allCases.map(\.rawValue).joined(separator: "|"))")
-            }
-            effort = parsed
-        }
-        return QuickSessionConfiguration(
-            modelID: r.string("model") ?? base.modelID,
-            effort: effort,
-            proxyEnabled: r.bool("proxy") ?? base.proxyEnabled
-        )
     }
 
     // MARK: - 대상 해석
@@ -519,33 +430,15 @@ enum ControlCommands {
         }
         if let index = Int(query), entries.indices.contains(index) { return entries[index] }
         if let hit = entries.first(where: { $0.state.windowStateId.uuidString.lowercased().hasPrefix(query.lowercased()) }) { return hit }
-        if let hit = entries.first(where: { $0.state.windowKind.rawValue == query.lowercased() }) { return hit }
+        if query.lowercased() == "workspace", let first = entries.first { return first }
         throw fail("window not found: \(query)")
     }
 
     private static func workspaceWindow(_ r: ControlRequest) throws -> WindowEntry {
-        let entry = try window(r)
-        if entry.state.windowKind == .workspace { return entry }
-        guard let other = liveWindows().first(where: { $0.state.windowKind == .workspace }) else {
-            throw fail("no workspace window open (sm window new)")
-        }
-        return other
+        try window(r)
     }
 
-    private static func quickWindow(_ r: ControlRequest) throws -> WindowEntry {
-        if let query = r.string("window"), !query.isEmpty, query != "front", query != "key" {
-            let entry = try window(r)
-            guard entry.state.windowKind == .quick else { throw fail("window \(query) is not a quick window") }
-            return entry
-        }
-        let quicks = liveWindows().filter { $0.state.windowKind == .quick }
-        guard let entry = quicks.first(where: { $0.window?.isKeyWindow == true }) ?? quicks.first else {
-            throw fail("no quick window open")
-        }
-        return entry
-    }
-
-    /// 워크스페이스 질의: id 접두사 / 이름 / tmux 세션명 / 경로 / 경로 마지막 요소.
+    /// 워크스페이스 질의: id 접두사 / 이름 / 배치 이름 / 경로 / 경로 마지막 요소.
     static func matchWorkspace(_ query: String, in workspaces: [Workspace]) -> Workspace? {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return nil }
@@ -553,7 +446,7 @@ enum ControlCommands {
         let expanded = ((q as NSString).expandingTildeInPath as NSString).standardizingPath
         return workspaces.first { $0.id.uuidString.lowercased() == lower }
             ?? workspaces.first { $0.name == q }
-            ?? workspaces.first { $0.effectiveTmuxSessionName == q }
+            ?? workspaces.first { $0.effectiveLayoutName == q }
             ?? workspaces.first { $0.rootPath == expanded }
             ?? workspaces.first { $0.name.lowercased() == lower }
             ?? workspaces.first { ($0.rootPath as NSString).lastPathComponent.lowercased() == lower }
@@ -562,69 +455,16 @@ enum ControlCommands {
 
     private static func workspace(_ r: ControlRequest) throws -> (WindowEntry, Workspace) {
         guard let query = r.string("ws") else { throw fail("workspace required") }
-        let candidates: [WindowEntry] = r.string("window") == nil
-            ? liveWindows().filter { $0.state.windowKind == .workspace }
-            : [try window(r)]
+        let candidates: [WindowEntry] = r.string("window") == nil ? liveWindows() : [try window(r)]
         for entry in candidates {
             if let ws = matchWorkspace(query, in: entry.state.workspaces) { return (entry, ws) }
         }
         throw fail("workspace not found: \(query)")
     }
 
-    private static func workspaceOrSelected(_ r: ControlRequest) throws -> (WindowEntry, Workspace) {
-        if r.string("ws") != nil { return try workspace(r) }
-        let entry = try workspaceWindow(r)
-        guard let ws = entry.state.selectedWorkspace else { throw fail("no workspace selected") }
-        return (entry, ws)
-    }
-
     private static func refetch(_ ws: Workspace, in entry: WindowEntry) throws -> Workspace {
         guard let fresh = entry.state.workspaces.first(where: { $0.id == ws.id }) else { throw fail("workspace vanished") }
         return fresh
-    }
-
-    /// 탭 질의 대상. `sm tabs <ws>`는 선택되지 않은 워크스페이스의 탭도 보여 주므로,
-    /// 거기서 얻은 ID·이름은 화면 선택과 무관하게 찾아져야 한다.
-    private static func tab(_ r: ControlRequest) throws -> (WindowEntry, Workspace?, TerminalSession) {
-        guard let query = r.string("tab") else { throw fail("tab required") }
-        var groups: [(entry: WindowEntry, workspace: Workspace?, sessions: [TerminalSession])] = []
-        if r.string("ws") != nil {
-            let (entry, ws) = try workspace(r)
-            groups = [(entry, ws, entry.state.sessions(for: ws))]
-        } else {
-            // 첫 그룹 = 대상 창(기본 key 창)의 보이는 탭 목록. 인덱스는 이 목록 기준이다.
-            let front = try window(r)
-            let others = r.string("window") == nil ? liveWindows().filter { $0.state !== front.state } : []
-            for entry in [front] + others {
-                let selectedID = entry.state.selectedWorkspace?.id
-                groups.append((entry, entry.state.selectedWorkspace, entry.state.sessions))
-                for ws in entry.state.workspaces where ws.id != selectedID {
-                    groups.append((entry, ws, entry.state.sessions(for: ws)))
-                }
-            }
-        }
-        guard let hit = matchTab(query, in: groups.map(\.sessions)) else { throw fail("tab not found: \(query)") }
-        let group = groups[hit.group]
-        return (group.entry, group.workspace, hit.session)
-    }
-
-    /// 우선순위: 정확한 id → 이름/tmux 세션명 → 인덱스(첫 그룹만) → id 접두사(4자 이상).
-    /// 각 단계는 그룹 순서대로 훑으므로 같은 이름이면 보이는 탭이 이긴다.
-    nonisolated static func matchTab(_ query: String, in groups: [[TerminalSession]]) -> (group: Int, session: TerminalSession)? {
-        let lower = query.lowercased()
-        func first(_ match: (TerminalSession) -> Bool) -> (group: Int, session: TerminalSession)? {
-            for (index, sessions) in groups.enumerated() {
-                if let hit = sessions.first(where: match) { return (index, hit) }
-            }
-            return nil
-        }
-        if let hit = first({ $0.id.uuidString.lowercased() == lower }) { return hit }
-        if let hit = first({ $0.name == query || $0.tmuxSessionName == query }) { return hit }
-        if let index = Int(query), let visible = groups.first, visible.indices.contains(index) {
-            return (0, visible[index])
-        }
-        guard query.count >= 4 else { return nil }
-        return first { $0.id.uuidString.lowercased().hasPrefix(lower) }
     }
 
     private static func focus(_ entry: WindowEntry) {
@@ -640,12 +480,12 @@ enum ControlCommands {
     private static func describe(_ entry: WindowEntry) -> [String: Any] {
         [
             "id": entry.state.windowStateId.uuidString,
-            "kind": entry.state.windowKind.rawValue,
+            "kind": "workspace",
             "isKey": entry.window?.isKeyWindow ?? false,
             "appearance": entry.state.preferredAppearance,
             "workspaceCount": entry.state.workspaces.count,
             "selectedWorkspace": entry.state.selectedWorkspace?.name ?? "",
-            "tabCount": entry.state.sessions.count,
+            "tabCount": entry.state.selectedLayout?.tabs.count ?? 0,
         ]
     }
 
@@ -654,28 +494,13 @@ enum ControlCommands {
             "id": ws.id.uuidString,
             "name": ws.name,
             "rootPath": ws.rootPath,
-            "tmuxSession": ws.effectiveTmuxSessionName,
-            "customTmuxSession": ws.tmuxSessionName ?? "",
+            "layout": ws.effectiveLayoutName,
+            "tmuxSession": ws.effectiveLayoutName,   // 옛 sm CLI가 읽는 이름
+            "customTmuxSession": ws.layoutName ?? "",
             "remoteHost": ws.remoteHost ?? "",
             "projects": ws.additionalProjects.map(\.path),
             "selected": entry.state.selectedWorkspace?.id == ws.id,
             "window": entry.state.windowStateId.uuidString,
-        ]
-    }
-
-    private static func describe(_ s: TerminalSession, selected: Bool) -> [String: Any] {
-        [
-            "id": s.id.uuidString,
-            "kind": s.kind.rawValue,
-            "name": s.name,
-            "workingDirectory": s.workingDirectory,
-            "tmuxSession": s.tmuxSessionName ?? "",
-            "remoteHost": s.remoteHost ?? "",
-            "running": s.isRunning,
-            "reconnecting": s.isReconnecting,
-            "error": s.startError ?? "",
-            "lastConnectionFailure": s.lastConnectionFailure ?? "",
-            "selected": selected,
         ]
     }
 

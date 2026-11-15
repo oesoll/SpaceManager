@@ -1,19 +1,17 @@
 import SwiftUI
 
-/// 터미널 카드의 내용. 나누지 않은 탭은 지금처럼 터미널 하나를 그리고, 나눈 탭은 패널 분할을 그린다.
+/// 터미널 카드의 내용: 고른 워크스페이스의 배치(세션 층 파일)에서 지금 탭의 패널들.
 /// 이 창이 떠 있는 동안 peer 목록을 받아 패널 이름 줄에 에이전트 상태를 붙인다.
 struct TabSurfaceView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        TabSurfaceContent(panes: appState.panes, directory: .shared, layouts: .shared,
-                          interaction: appState.layoutInteraction)
+        TabSurfaceContent(directory: .shared, layouts: .shared, interaction: appState.layoutInteraction)
     }
 }
 
 private struct TabSurfaceContent: View {
     @EnvironmentObject private var appState: AppState
-    @ObservedObject var panes: PaneStore
     @ObservedObject var directory: PeerDirectory
     @ObservedObject var layouts: LayoutDirectory
     @ObservedObject var interaction: LayoutInteraction
@@ -40,9 +38,9 @@ private struct TabSurfaceContent: View {
         if visited.key != layoutKey { visited = (layoutKey, [tab]) } else if !visited.tabs.contains(tab) { visited.tabs.insert(tab) }
     }
 
-    /// 배치 데이터가 있는 워크스페이스면 그것을 그린다(tmux 탭 없이).
+    /// 고른 워크스페이스의 배치와 지금 보일 탭.
     private var layoutTab: (WorkspaceLayout, WorkspaceLayout.Tab, Workspace)? {
-        guard appState.windowKind == .workspace, let workspace = appState.selectedWorkspace,
+        guard let workspace = appState.selectedWorkspace,
               let layout = layouts.layouts[appState.layoutKey(for: workspace)], let tab = appState.displayedTab(of: layout) else { return nil }
         return (layout, tab, workspace)
     }
@@ -52,22 +50,16 @@ private struct TabSurfaceContent: View {
         layoutTab.map { LayoutInteraction.tabKey($0.0, $0.1.id) }
     }
 
-    /// 이 워크스페이스에 배치가 있는지 아직 모른다 — 빈 카드로 기다린다(옛 탭을 먼저 붙이지 않는다).
+    /// 이 워크스페이스에 배치가 있는지 아직 모른다 — 빈 카드로 기다린다.
     private var layoutUndecided: Bool {
-        guard appState.windowKind == .workspace, let workspace = appState.selectedWorkspace else { return false }
+        guard let workspace = appState.selectedWorkspace else { return false }
         return !layouts.isSettled(appState.layoutKey(for: workspace), remote: workspace.isRemote)
     }
 
     /// 이 창이 따라갈 원격 배치(선택된 원격 워크스페이스 하나).
     private var remoteLayoutKeys: Set<String> {
-        guard appState.windowKind == .workspace, let workspace = appState.selectedWorkspace, workspace.isRemote else { return [] }
+        guard let workspace = appState.selectedWorkspace, workspace.isRemote else { return [] }
         return [appState.layoutKey(for: workspace)]
-    }
-
-    private var group: PaneGroup? {
-        guard appState.windowKind == .workspace, let tab = appState.selectedSession,
-              let group = panes.group(for: tab), group.isSplit else { return nil }
-        return group
     }
 
     private var workspaceIndex: Int {
@@ -77,10 +69,7 @@ private struct TabSurfaceContent: View {
     var body: some View {
         Group {
             if layoutUndecided {
-                Color(Chrome.pane)
-                    .clipShape(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous)
-                        .strokeBorder(Color(Chrome.hairline), lineWidth: 1))
+                EmptyCard()
                     .transition(.identity)
             } else if let layout = layoutTab?.0, interaction.pendingTab == LayoutDirectory.key(workspace: layout.workspace, host: layout.host) {
                 // 새 탭: 탭 전체가 고르는 상자 하나다.
@@ -132,36 +121,23 @@ private struct TabSurfaceContent: View {
                     remember(tab.id, in: layoutKey)
                     lastTab = (layoutKey, shownIndex)
                 }
-            } else if let group {
-                // 옛 tmux 탭 화면은 움직이지 않는다 — 떠나는 화면과 들어오는 화면이 같은 터미널을 두고 다툰다.
-                SplitTab(group: group, directory: directory)
-                    .transition(.identity)
-            } else if appState.windowKind == .workspace {
-                // 작업 창은 카드 라운딩이 없어 글자가 세로선에 붙는다. 셀 한 칸 남짓 들인다.
-                SingleTerminalView()
-                    .padding(EdgeInsets(top: 6, leading: 12, bottom: 4, trailing: 4))
-                    // 카드가 팔레트와 같은 색을 깔아 터미널 둘레 여백도 같은 면으로 읽힌다.
-                    .background(Color(Chrome.pane))
-                    .clipShape(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous)
-                        .strokeBorder(Color(Chrome.hairline), lineWidth: 1))
+            } else if let workspace = appState.selectedWorkspace {
+                // 배치가 없는 워크스페이스: 세션 층에 셸 탭 하나짜리 배치를 만든다(tmux 메인 탭이 하던 출발점).
+                MissingLayoutCard(workspace: workspace, interaction: interaction)
                     .transition(.identity)
             } else {
-                SingleTerminalView()
-                    .background(Color(nsColor: GlassSurfacePolicy.terminalCardColor(for: appState.windowKind)))
+                EmptyCard(message: "워크스페이스가 없습니다")
                     .transition(.identity)
             }
         }
         .animation(switchAnimation, value: appState.selectedWorkspace?.id)
         .onChange(of: appState.selectedWorkspace?.id) { _, _ in lastWorkspaceIndex = workspaceIndex }
         .onAppear {
-            guard appState.windowKind == .workspace else { return }
             directory.start(owner: appState.windowStateId)
             layouts.start(owner: appState.windowStateId)
             layouts.setRemote(remoteLayoutKeys, owner: appState.windowStateId)
         }
         .onDisappear {
-            guard appState.windowKind == .workspace else { return }
             directory.stop(owner: appState.windowStateId)
             layouts.stop(owner: appState.windowStateId)
         }
@@ -190,10 +166,6 @@ private struct TabSurfaceContent: View {
             appState.pruneLayoutTerminals()
             // 파일이 따라잡았으면 화면 쪽 임시 상태를 걷는다.
             if let layout = layoutTab?.0 { appState.settleLayoutOverrides(layout) }
-            closeLegacyTerminalsIfLayoutShown()
-        }
-        .onChange(of: appState.selectedWorkspace?.id) { _, _ in
-            closeLegacyTerminalsIfLayoutShown()
         }
     }
 }
@@ -217,15 +189,6 @@ extension TabSurfaceContent {
         }
     }
 
-    /// 배치로 보이는 워크스페이스의 옛 탭(tmux attach 등)이 이미 붙어 있으면 뗀다. 같은 에이전트를
-    /// tmux 보기 창과 sm 패널이 함께 붙들면 창 크기를 서로 바꾼다. tmux 세션 자체는 그대로 둔다.
-    fileprivate func closeLegacyTerminalsIfLayoutShown() {
-        guard layoutTab != nil else { return }
-        for session in appState.sessions where session.terminalView != nil {
-            session.cleanup()
-        }
-    }
-
     /// 배치 탭의 고르는 상자. 확정하면 세션 층의 split 하나로 배치와 세션이 함께 생긴다.
     @ViewBuilder
     fileprivate func layoutPicker(_ pending: LayoutInteraction.Pending, layout: WorkspaceLayout) -> some View {
@@ -246,57 +209,127 @@ extension TabSurfaceContent {
     }
 }
 
-private struct SplitTab: View {
-    @EnvironmentObject private var appState: AppState
-    @ObservedObject var group: PaneGroup
-    @ObservedObject var directory: PeerDirectory
+/// 탭 영역 전체를 차지하는 카드의 모양: 아래 노치를 파낸 둥근 사각형.
+private struct AreaCard<Content: View>: View {
+    @Environment(\.bottomNotch) private var notch
+    var focused = false
+    @ViewBuilder let content: Content
 
     var body: some View {
-        TabPanesView(group: group, badge: { session in
-            guard let agent = directory.agent(for: session, includeStale: true) else {
-                return directory.terminalNotice(for: session).map { PaneBadge(title: session.name, notice: $0) }
-                    ?? PaneBadge(title: session.name)
+        GeometryReader { proxy in
+            let cuts = CardCuts.of(frame: CGRect(origin: .zero, size: proxy.size), in: proxy.size, notch: notch)
+            content
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .background(Color(Chrome.pane))
+                .clipShape(NotchedCardShape(cuts: cuts))
+                .overlay(PaneRim(isFocused: focused, radius: ContentView.cardRadius, cuts: cuts))
+        }
+    }
+}
+
+/// 내용이 없는 카드(배치를 기다리는 동안 등).
+private struct EmptyCard: View {
+    var message: String?
+
+    var body: some View {
+        AreaCard {
+            if let message {
+                Text(message)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color(Chrome.textTertiary))
             }
-            return PaneBadge(agent: agent, attention: directory.attention(of: agent), notice: directory.notice(for: agent))
-        }, picker: { id in
-            AnyView(picker(for: id))
-        })
+        }
+    }
+}
+
+/// 배치가 없는 워크스페이스. 보이자마자 세션 층에 배치를 만들고(`ws new`), 못 만들면 까닭과 다시 시도를 보인다.
+///
+/// 만드는 동안은 상태를 말한다 — 다만 0.4초 안에 끝나는 보통의 경우에는 아무것도 비치지 않게 늦게 띄운다
+/// (번쩍 나타났다 사라지는 글은 오히려 소음이다). 실패는 무슨 일인지 → 까닭 → 할 일 순서로 세운다.
+private struct MissingLayoutCard: View {
+    @EnvironmentObject private var appState: AppState
+    let workspace: Workspace
+    @ObservedObject var interaction: LayoutInteraction
+    @State private var showsProgress = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var failure: String? {
+        if case .failed(let message) = interaction.layoutCreation[appState.layoutKey(for: workspace)] { return message }
+        return nil
     }
 
-    @ViewBuilder
-    private func picker(for id: UUID) -> some View {
-        if let context = group.pickerContexts[id] {
-            let taken = Set(directory.agents.map(\.name)).union(context.backgroundSessions.map(\.name))
-            AgentPickerView(
-                workspace: appState.selectedWorkspace?.name ?? "",
-                context: context,
-                initial: AgentPickerDefaults.load(fallback: .init(engine: .claude,
-                                                                  modelID: context.claudeModels.first?.id ?? "",
-                                                                  effort: .high)),
-                suggestName: { appState.suggestedAgentName(for: $0, taken: taken) },
-                onOpen: { appState.launchAgent($0, inPane: id, group: group) },
-                onBring: { appState.attachAgent(named: $0.name, host: appState.selectedWorkspace.flatMap(appState.sessionHost(for:)), inPane: id, group: group) },
-                onCancel: { group.cancelPicker(id) })
+    var body: some View {
+        AreaCard {
+            ZStack {
+                if let failure {
+                    VStack(spacing: 6) {
+                        Text("\(workspace.name)을 열지 못했습니다")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color(Chrome.textPrimary))
+                        Text(workspace.isRemote ? "\(workspace.remoteHost ?? "")에 닿지 않거나 세션 층이 답하지 않았습니다."
+                                                : "세션 층이 이 워크스페이스의 배치를 만들지 못했습니다.")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Color(Chrome.textSecondary))
+                        Text(failure)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Color(Chrome.textTertiary))
+                            .multilineTextAlignment(.center)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: 440)
+                            .padding(.top, 2)
+                        Button("다시 시도") {
+                            showsProgress = false
+                            appState.createLayout(for: workspace, retry: true)
+                            scheduleProgress()
+                        }
+                        .buttonStyle(PressScaleStyle())
+                        .padding(.top, 10)
+                        .keyboardShortcut(.defaultAction)
+                    }
+                    .transition(.opacity)
+                } else if showsProgress {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("\(workspace.name) 준비 중")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Color(Chrome.textSecondary))
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.2), value: failure)
+            .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.2), value: showsProgress)
+        }
+        .onAppear { start() }
+        .onChange(of: workspace.id) { _, _ in start() }
+    }
+
+    private func start() {
+        showsProgress = false
+        appState.createLayout(for: workspace)
+        scheduleProgress()
+    }
+
+    private func scheduleProgress() {
+        let id = workspace.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            if workspace.id == id { showsProgress = true }
         }
     }
 }
 
 
-/// 탭 막대를 채운다: 배치가 있으면 배치의 탭, 없으면 지금까지의 탭(tmux·셸).
+/// 탭 막대를 채운다: 고른 워크스페이스 배치의 탭.
 struct TabStripBar: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject var layouts: LayoutDirectory
     @ObservedObject var peers: PeerDirectory
     @ObservedObject var interaction: LayoutInteraction
+    var maxWidth: CGFloat = .infinity
 
     var body: some View {
-        HStack(spacing: 0) {
-            if let workspace = appState.selectedWorkspace, let layout = layouts.layouts[appState.layoutKey(for: workspace)] {
-                layoutStrip(layout)
-            } else {
-                legacyStrip
-            }
-            Spacer(minLength: 0)
+        if let workspace = appState.selectedWorkspace, let layout = layouts.layouts[appState.layoutKey(for: workspace)] {
+            layoutStrip(layout)
         }
     }
 
@@ -329,25 +362,8 @@ struct TabStripBar: View {
                       let pane = appState.movableToFine(tab: tab, in: layout) else { return }
                 appState.moveLayoutPaneToFine(pane, in: layout)
             },
-            onNew: { appState.beginLayoutNewTab(in: layout) })
-    }
-
-    private var legacyStrip: some View {
-        WorkspaceTabStrip(
-            items: appState.sessions.map { session in
-                WorkspaceTabStrip.Item(id: session.id.uuidString, name: session.name,
-                                       isActive: appState.selectedSession?.id == session.id,
-                                       attention: appState.agentRollup(forTab: session, directory: peers),
-                                       canClose: session.kind != .tmuxMain,
-                                       notices: appState.notices(forTab: session, directory: peers).map(\.id))
-            },
-            onSelect: { id in
-                if let session = appState.sessions.first(where: { $0.id.uuidString == id }) { appState.selectSession(session) }
-            },
-            onClose: { id in
-                if let session = appState.sessions.first(where: { $0.id.uuidString == id }) { appState.removeSession(session) }
-            },
-            onNew: { appState.addDefaultTab() })
+            onNew: { appState.beginLayoutNewTab(in: layout) },
+            maxWidth: maxWidth)
     }
 }
 
@@ -362,8 +378,21 @@ struct PickerCardStandalone<Content: View>: View {
                 .padding(.top, 48)
         }
         .scrollIndicators(.never)
-        .background(Color(Chrome.pane))
-        .clipShape(RoundedRectangle(cornerRadius: ContentView.cardRadius, style: .continuous))
-        .overlay(PaneRim(isFocused: true, radius: ContentView.cardRadius))
+        .modifier(AreaCardShape())
+    }
+}
+
+/// `AreaCard`와 같은 모양을 이미 있는 뷰에 입힌다(스크롤 뷰처럼 자기 크기를 정하는 것).
+private struct AreaCardShape: ViewModifier {
+    @Environment(\.bottomNotch) private var notch
+
+    func body(content: Content) -> some View {
+        GeometryReader { proxy in
+            let cuts = CardCuts.of(frame: CGRect(origin: .zero, size: proxy.size), in: proxy.size, notch: notch)
+            content
+                .background(Color(Chrome.pane))
+                .clipShape(NotchedCardShape(cuts: cuts))
+                .overlay(PaneRim(isFocused: true, radius: ContentView.cardRadius, cuts: cuts))
+        }
     }
 }

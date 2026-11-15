@@ -43,7 +43,7 @@ final class StageDemoTests: XCTestCase {
 
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
-        let session = TerminalSession(kind: .shell, name: "demo", workingDirectory: NSHomeDirectory(),
+        let session = TerminalSession(name: "demo", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "demo", host: "mac", agent: nil))
         let director = try XCTUnwrap(session.stageDirector)
         director.sessionLayer = dir + "/sm-session"

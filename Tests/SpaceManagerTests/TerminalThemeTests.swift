@@ -24,13 +24,13 @@ final class TerminalThemeTests: XCTestCase {
     }
 
     func testBothPalettesDefineEveryANSISlot() throws {
-        for palette in [TerminalPalette.quickLight, .workspaceDark] {
+        for palette in [TerminalPalette.workspaceLight, .workspaceDark] {
             XCTAssertEqual(Set(Self.ansi16).subtracting(palette.colors.keys), [])
             // 16칸이 모두 Ghostty 설정의 palette 줄이 된다.
             let config = GhosttyConfigText.make(theme: palette.ghosttyTheme)
             XCTAssertEqual(config.components(separatedBy: "\npalette = ").count - 1, 16)
         }
-        XCTAssertEqual(TerminalPalette.quickLight.colors["background"], "#ffffff")
+        XCTAssertEqual(TerminalPalette.workspaceLight.colors["background"], "#ffffff")
         // 워크스페이스 터미널 카드(GlassSurfacePolicy.terminalCardColor)와 같은 바탕.
         XCTAssertEqual(TerminalPalette.workspaceDark.colors["background"], "#1e1e1e")
     }
@@ -38,7 +38,7 @@ final class TerminalThemeTests: XCTestCase {
     /// Claude `*-ansi` 테마의 실제 출력: 97은 본문 강조, 37은 보조 글자, 94는 인라인 코드·링크.
     /// 이름이 아니라 역할로 읽혀야 한다 — 라이트에서 97이 희면 흰 바탕에서 사라진다.
     func testClaudeANSIRolesReadOnBothBackgrounds() throws {
-        for palette in [TerminalPalette.quickLight, .workspaceDark] {
+        for palette in [TerminalPalette.workspaceLight, .workspaceDark] {
             let c = palette.colors
             let bg = try XCTUnwrap(c["background"])
             let emphasis = try Self.contrast(XCTUnwrap(c["brightWhite"]), bg)

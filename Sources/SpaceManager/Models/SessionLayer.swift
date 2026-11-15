@@ -117,17 +117,25 @@ enum SessionLayer {
 
 /// 고르는 상자의 모델 목록.
 enum AgentModelCatalog {
-    /// Claude 모델은 설치된 claude 실행 파일에서 뽑는다(Quick과 같은 출처). 실행 파일을 훑느라 느릴 수 있어
-    /// 뒤에서 부른다. 상자는 그동안 Quick의 기본 목록으로 먼저 뜬다.
+    /// 실행 파일을 못 읽을 때 상자가 먼저 띄우는 목록.
+    static let claudeFallbackOptions: [ClaudeModelOption] = [
+        ClaudeModelOption(id: "claude-opus-4-8", displayName: "Opus 4.8"),
+        ClaudeModelOption(id: "claude-sonnet-5", displayName: "Sonnet 5"),
+        ClaudeModelOption(id: "claude-fable-5", displayName: "Fable 5"),
+        ClaudeModelOption(id: "claude-haiku-4-5", displayName: "Haiku 4.5"),
+    ]
+
+    /// Claude 모델은 설치된 claude 실행 파일에서 뽑는다. 실행 파일을 훑느라 느릴 수 있어
+    /// 뒤에서 부른다. 상자는 그동안 기본 목록으로 먼저 뜬다.
     static func claude() -> [AgentModelChoice] {
         ClaudeCLIModelDiscovery.discover().map(choice)
     }
 
     static func claudeFallback() -> [AgentModelChoice] {
-        QuickModelCatalog.fallbackModels.map(choice)
+        AgentModelCatalog.claudeFallbackOptions.map(choice)
     }
 
-    private static func choice(_ model: QuickModelOption) -> AgentModelChoice {
+    private static func choice(_ model: ClaudeModelOption) -> AgentModelChoice {
         AgentModelChoice(id: model.id, name: model.displayName, efforts: model.supportedEfforts, defaultEffort: .high)
     }
 
@@ -148,8 +156,8 @@ enum AgentModelCatalog {
               let decoded = try? JSONDecoder().decode(Cache.self, from: data) else { return [] }
         return decoded.models.filter { ($0.visibility ?? "list") == "list" }.map { model in
             AgentModelChoice(id: model.slug, name: model.display_name,
-                             efforts: (model.supported_reasoning_levels ?? []).compactMap { QuickEffort(rawValue: $0.effort) },
-                             defaultEffort: model.default_reasoning_level.flatMap(QuickEffort.init(rawValue:)))
+                             efforts: (model.supported_reasoning_levels ?? []).compactMap { AgentEffort(rawValue: $0.effort) },
+                             defaultEffort: model.default_reasoning_level.flatMap(AgentEffort.init(rawValue:)))
         }
     }
 }

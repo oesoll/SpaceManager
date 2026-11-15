@@ -18,22 +18,34 @@ import AppKit
 struct PaneRim: View {
     let isFocused: Bool
     var radius: CGFloat = TabPanesView.radius
+    /// 아래 노치에 파낸 자리(카드 좌표). 테두리가 그 윤곽을 따른다.
+    var cuts: CardCuts = .none
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        RimRepresentable(isFocused: isFocused, radius: radius, moves: !reduceMotion)
-            .allowsHitTesting(false)
+        ZStack {
+            // 머리카락 선은 SwiftUI가 그린다 — 노치 폭이 바뀔 때 카드 클립과 같은 스프링으로 따라가게(AppKit 층은
+            // 애니메이션 중간 값을 받지 못해 툭 바뀌었다). 포커스된 카드에서는 빛에 자리를 내준다.
+            NotchedCardShape(cuts: cuts, radius: radius, inset: 0.5)
+                .stroke(Color(Chrome.hairline), lineWidth: 1)
+                .opacity(isFocused ? 0 : 1)
+                .animation(.easeOut(duration: isFocused ? PaneRimView.fadeIn : PaneRimView.fadeOut), value: isFocused)
+            RimRepresentable(isFocused: isFocused, radius: radius, cuts: cuts, moves: !reduceMotion)
+        }
+        .allowsHitTesting(false)
     }
 }
 
 private struct RimRepresentable: NSViewRepresentable {
     let isFocused: Bool
     let radius: CGFloat
+    let cuts: CardCuts
     let moves: Bool
 
     func makeNSView(context: Context) -> PaneRimView {
         let view = PaneRimView()
         view.radius = radius
+        view.cuts = cuts
         view.moves = moves
         view.setFocused(isFocused, animated: false)
         return view
@@ -41,6 +53,7 @@ private struct RimRepresentable: NSViewRepresentable {
 
     func updateNSView(_ view: PaneRimView, context: Context) {
         view.radius = radius
+        view.cuts = cuts
         view.moves = moves
         view.setFocused(isFocused, animated: true)
     }
@@ -48,6 +61,7 @@ private struct RimRepresentable: NSViewRepresentable {
 
 final class PaneRimView: NSView {
     var radius: CGFloat = 12 { didSet { if radius != oldValue { needsLayout = true } } }
+    var cuts: CardCuts = .none { didSet { if cuts != oldValue { needsLayout = true } } }
     var moves = true { didSet { if moves != oldValue { refreshSpin() } } }
     private(set) var isFocused = false
 
@@ -66,6 +80,8 @@ final class PaneRimView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        // 머리카락 선은 PaneRim(SwiftUI)이 그린다. 이 층은 남겨 두되 그리지 않는다.
+        hairline.isHidden = true
         layer?.addSublayer(hairline)
         layer?.addSublayer(glow)
         hairline.fillColor = nil
@@ -93,21 +109,27 @@ final class PaneRimView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         hairline.frame = bounds
-        hairline.path = Self.roundedPath(bounds, inset: 0.5, radius: radius)
+        hairline.path = outline(inset: 0.5)
         glow.frame = bounds
         // 대각선만큼 큰 정사각형 위에 그라데이션을 깔아, 돌려도 모서리가 비지 않게 한다.
         let side = hypot(bounds.width, bounds.height)
         gradient.bounds = CGRect(x: 0, y: 0, width: side, height: side)
         gradient.position = CGPoint(x: bounds.midX, y: bounds.midY)
         ring.frame = bounds
-        ring.path = Self.roundedPath(bounds, inset: Self.lineWidth / 2, radius: radius)
+        // 포커스 빛은 노치를 따라 꺾지 않는다 — 둥근 사각형 그대로 두고, 노치 자리는 바탕색 면이 위에서 덮는다
+        // (SEOL 11/15: 노치 윤곽을 따라 도는 빛이 이상하다). 머리카락 선만 노치를 따라 카드 윤곽을 맺는다.
+        ring.path = CGPath(roundedRect: bounds.insetBy(dx: Self.lineWidth / 2, dy: Self.lineWidth / 2),
+                           cornerWidth: max(0, radius - Self.lineWidth / 2), cornerHeight: max(0, radius - Self.lineWidth / 2),
+                           transform: nil)
         CATransaction.commit()
     }
 
-    private static func roundedPath(_ rect: CGRect, inset: CGFloat, radius: CGFloat) -> CGPath {
-        let corner = max(0, radius - inset)
-        return CGPath(roundedRect: rect.insetBy(dx: inset, dy: inset), cornerWidth: corner, cornerHeight: corner,
-                      transform: nil)
+    /// 카드 윤곽. 윤곽 계산은 아래로 y가 커지는 좌표라, 뒤집히지 않은 이 뷰(아래가 0)에 맞게 뒤집는다.
+    private func outline(inset: CGFloat) -> CGPath {
+        let path = CardOutline.path(in: bounds, cuts: cuts, radius: radius, inset: inset)
+        guard !isFlipped else { return path }
+        var flip = CGAffineTransform(translationX: 0, y: bounds.height).scaledBy(x: 1, y: -1)
+        return path.copy(using: &flip) ?? path
     }
 
     /// 동적 색은 CALayer에 넘길 때 고정되므로 외형이 바뀔 때마다 다시 푼다.
