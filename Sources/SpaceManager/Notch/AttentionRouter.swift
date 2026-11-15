@@ -20,7 +20,11 @@ enum AttentionRouter {
             _ = try await run(FineControl.cli, ["tab", "select", String(item.source.dropFirst(5))])
             return
         }
+        // A tmux pane is reached through tmux-bridge, which only tmux setups have; seol's sessions take the paths above.
         let bridge = ProcessInfo.processInfo.environment["FINE_BRIDGE_BIN"] ?? NSHomeDirectory() + "/.smux/bin/tmux-bridge"
+        guard FileManager.default.isExecutableFile(atPath: bridge) else {
+            throw AttentionError("this notice came from a tmux pane, and opening one needs tmux-bridge (\(bridge))")
+        }
         let output = try await run(bridge, ["focus", item.address, "--fingerprint", item.fingerprint])
         guard let location = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any],
               let session = location["session"] as? String else { return }
