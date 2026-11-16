@@ -113,15 +113,18 @@ final class SessionStateHub {
                 }
             }
         }
-        process.terminationHandler = { [weak self] _ in
+        process.terminationHandler = { [weak self] ended in
+            let status = ended.terminationStatus
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, self.process === process else { return }
                     self.process = nil
                     self.input = nil
                     guard !self.subscribers.isEmpty else { return }
-                    // 줄 하나 없이 곧 끝났다: 이 기기의 세션 층이 `state -`를 모른다(옛 판).
-                    if !heardAny, Date().timeIntervalSince(started) < 10 {
+                    // 줄 하나 없이 인자 오류(2)로 곧 끝났다: 이 기기의 세션 층이 `state -`를 모른다(옛 판).
+                    // ssh가 닿지 않은 것(255 — 아치가 잠들었거나 부팅 직후 네트워크가 아직 없다)은 옛 판이 아니다:
+                    // 그렇게 보면 앱을 다시 켤 때까지 패널마다 따로 감시했다. 그때는 아래처럼 다시 붙는다.
+                    if !heardAny, status == 2, Date().timeIntervalSince(started) < 10 {
                         self.unsupported = true
                         let waiting = self.subscribers.values.flatMap(\.values)
                         self.subscribers = [:]

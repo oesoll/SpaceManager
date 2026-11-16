@@ -47,4 +47,36 @@ final class SessionStateHubTests: XCTestCase {
         // a를 보는 패널이 하나 남았으니 -a는 아직 보내지 않는다.
         XCTAssertTrue(wait(2) { read("lines") == ["+a", "+b"] }, "\(read("lines"))")
     }
+
+    /// 옛 세션 층(인자 오류, 2)이면 패널마다 감시로 돌아가고, 닿지 않는 기기(ssh 255)는 다시 붙는다.
+    func testAnOldLayerFallsBackButAnUnreachableHostRetries() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("hub-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func fake(_ name: String, _ body: String) throws -> String {
+            let path = dir.appendingPathComponent(name).path
+            try ("#!/bin/sh\n" + body + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+            return path
+        }
+        SessionStateHub.stopAll()
+        defer { SessionStateHub.stopAll() }
+
+        let old = try fake("old", "echo 'sm state: error: unrecognized arguments: --host mac' >&2; exit 2")
+        var fellBack = false
+        _ = SessionStateHub.shared(host: "mac", executable: old).subscribe("a", onState: { _ in }, onUnsupported: { fellBack = true })
+        XCTAssertTrue(wait(3) { fellBack }, "an old session layer did not fall back to per-pane watching")
+
+        // 처음 두 번은 닿지 않고(255), 세 번째에 붙는다.
+        let flaky = try fake("flaky", """
+        dir=$(dirname "$0"); n=$(cat "$dir/tries" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$dir/tries"
+        [ $n -lt 3 ] && exit 255
+        while read l; do case "$l" in +*) printf '{"name":"%s","state":"ready","at":0}\\n' "${l#+}" ;; esac; done
+        """)
+        var states: [String] = [], unsupported = false
+        _ = SessionStateHub.shared(host: "arch", executable: flaky).subscribe("b", onState: { states.append($0) },
+                                                                             onUnsupported: { unsupported = true })
+        XCTAssertTrue(wait(12) { states == ["ready"] }, "an unreachable host was not retried: \(states)")
+        XCTAssertFalse(unsupported, "an unreachable host was taken for an old session layer")
+    }
 }
