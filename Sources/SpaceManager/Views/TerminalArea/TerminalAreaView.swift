@@ -4,7 +4,7 @@ import SwiftUI
 /// 화면 밖 에이전트 묶음이 선다(`BottomNotch`). 미리보기는 오른쪽 노치에서 위로 뜬다.
 struct TerminalAreaView: View {
     @EnvironmentObject var appState: AppState
-    @ObservedObject private var sessions = WorkspaceSessions.shared
+    @ObservedObject private var layouts = LayoutDirectory.shared
     @ObservedObject private var peers = PeerDirectory.shared
     @StateObject private var preview = AgentPreview()
     @State private var notch = BottomNotch.none
@@ -20,8 +20,8 @@ struct TerminalAreaView: View {
 
     /// 이 워크스페이스에서 돌지만 sm 패널에는 없는 에이전트.
     private var shelfAgents: [ShelfAgent] {
-        guard let key = layoutKey, appState.selectedLayout != nil else { return [] }
-        return ShelfAgent.from(sessions.byLayout[key] ?? [], peers: peers)
+        guard let key = layoutKey, let layout = layouts.layouts[key] else { return [] }
+        return ShelfAgent.from(layout: layout, layouts: Array(layouts.layouts.values), peers: peers)
     }
 
     /// 노치 폭, 칩과 묶음이 바뀌는 움직임. 위 화면의 탭·워크스페이스 전환과 같은 스프링이라 한 몸으로 움직인다.
@@ -130,31 +130,16 @@ struct TerminalAreaView: View {
             .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.32, dampingFraction: 1.0),
                        value: preview.agent?.id)
         }
-        .onAppear { follow() }
-        .onChange(of: layoutKey) { _, _ in
-            follow()
-            closePreview()
-        }
+        .onChange(of: layoutKey) { _, _ in closePreview() }
         .onChange(of: appState.selectedWorkspace?.id) { _, _ in
             // 다음 전환의 방향을 정할 기준(이번 전환의 칩은 이미 그려졌다).
             DispatchQueue.main.async { lastWorkspaceIndex = workspaceIndex }
-        }
-        // 배치가 바뀌면(패널을 닫아 세션이 뒤로 갔거나, 미리보던 것을 패널로 열었다) 묶음을 바로 다시 읽는다.
-        .onChange(of: appState.selectedLayout?.version) { _, _ in
-            if let layoutKey { WorkspaceSessions.shared.refresh(layoutKey) }
         }
         // 미리보던 세션이 패널로 갔거나 끝났으면 미리보기는 할 일이 끝났다.
         .onChange(of: shelfAgents.map(\.id)) { _, ids in
             if let agent = preview.agent, !ids.contains(agent.id) { closePreview() }
         }
-        .onDisappear {
-            WorkspaceSessions.shared.stop(owner: appState.windowStateId)
-            preview.close()
-        }
-    }
-
-    private func follow() {
-        WorkspaceSessions.shared.follow(layoutKey, owner: appState.windowStateId)
+        .onDisappear { preview.close() }
     }
 
     private func openPreview(_ agent: ShelfAgent) {

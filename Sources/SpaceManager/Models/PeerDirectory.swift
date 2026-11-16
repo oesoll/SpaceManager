@@ -31,6 +31,10 @@ struct PeerAgent: Decodable, Identifiable, Equatable {
     let window: Int?
     let pane: Int?
     let waitingOn: String?
+    /// sm 세션이면 그 holder 소켓(세션 층이 쥔 에이전트). 없으면 sm 밖(Fine 탭·tmux)에서 도는 에이전트.
+    var hold: String? = nil
+    /// 이 에이전트를 띄운 쪽(`기기/peer id`).
+    var parent: String? = nil
     /// 마지막으로 성공한 목록에 없던 원격 행. 연결이 끊긴 동안 지난 상태를 흐리게 보여 준다.
     var isStale = false
 
@@ -38,7 +42,7 @@ struct PeerAgent: Decodable, Identifiable, Equatable {
     var key: String { host + "/" + id }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, kind, host, cwd, title, target, state, reason, since, group, window, pane
+        case id, name, kind, host, cwd, title, target, state, reason, since, group, window, pane, hold, parent
         case waitingOn = "waiting_on"
     }
 
@@ -68,6 +72,8 @@ struct PeerAgent: Decodable, Identifiable, Equatable {
         window = try c.decodeIfPresent(Int.self, forKey: .window)
         pane = try c.decodeIfPresent(Int.self, forKey: .pane)
         waitingOn = try c.decodeIfPresent(String.self, forKey: .waitingOn)
+        hold = try c.decodeIfPresent(String.self, forKey: .hold)
+        parent = try c.decodeIfPresent(String.self, forKey: .parent)
     }
 }
 
