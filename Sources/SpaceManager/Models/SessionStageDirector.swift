@@ -30,6 +30,9 @@ final class SessionStageDirector {
     private(set) var state: String?
     private(set) var isActive = false
     private var watcher: Process?
+    /// 기기 하나의 상태 스트림을 나눠 쓰는 구독(SessionStateHub). 옛 세션 층이면 nil이고 패널이 따로 듣는다.
+    private var subscription: UUID?
+    private var watchesAlone = false
     private var watchRestart: DispatchWorkItem?
     private var reconnect: DispatchWorkItem?
     private var reconnectAttempt = 0
@@ -242,6 +245,24 @@ final class SessionStageDirector {
 
     private func watch() {
         stopWatch()
+        guard !watchesAlone else { return watchAlone() }
+        let (name, host) = Self.split(target)
+        let hub = SessionStateHub.shared(host: host, executable: sessionLayer)
+        subscription = hub.subscribe(name, onState: { [weak self] state in self?.apply(state) }, onUnsupported: { [weak self] in
+            guard let self else { return }
+            self.subscription = nil
+            self.watchesAlone = true
+            if self.isActive { self.watchAlone() }
+        })
+    }
+
+    static func split(_ target: String) -> (name: String, host: String) {
+        guard let at = target.lastIndex(of: "@") else { return (target, PeerDirectory.shared.localHostName) }
+        return (String(target[..<at]), String(target[target.index(after: at)...]))
+    }
+
+    /// 이 패널만의 감시 — `state -`를 모르는 옛 세션 층에서만 쓴다.
+    private func watchAlone() {
         var heardAny = false
         let process = Process()
         process.executableURL = URL(fileURLWithPath: sessionLayer)
@@ -277,7 +298,7 @@ final class SessionStageDirector {
                     }
                     let work = DispatchWorkItem { [weak self] in
                         guard let self, self.isActive else { return }
-                        self.watch()
+                        self.watchAlone()
                     }
                     self.watchRestart = work
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
@@ -292,7 +313,7 @@ final class SessionStageDirector {
             output.fileHandleForReading.readabilityHandler = nil
             let work = DispatchWorkItem { [weak self] in
                 guard let self, self.isActive else { return }
-                self.watch()
+                self.watchAlone()
             }
             watchRestart = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
@@ -302,6 +323,11 @@ final class SessionStageDirector {
     }
 
     private func stopWatch() {
+        if let subscription {
+            let (name, host) = Self.split(target)
+            SessionStateHub.shared(host: host, executable: sessionLayer).unsubscribe(name, subscription)
+            self.subscription = nil
+        }
         watchRestart?.cancel()
         watchRestart = nil
         if let watcher, watcher.isRunning { watcher.terminate() }

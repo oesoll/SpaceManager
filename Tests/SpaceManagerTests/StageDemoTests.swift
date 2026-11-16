@@ -26,7 +26,7 @@ final class StageDemoTests: XCTestCase {
         #!/bin/sh
         dir=$(dirname "$0")
         case "$1" in
-        state) last=""; while true; do s=$(cat "$dir/ctl" 2>/dev/null); if [ "$s" != "$last" ]; then printf '{"name":"demo","state":"%s","at":0}\\n' "$s"; last=$s; fi; sleep 0.05; done ;;
+        state) (while read l; do case "$l" in +*) : > "$dir/kick" ;; esac; done) <&0 & last=""; while true; do s=$(cat "$dir/ctl" 2>/dev/null); if [ -e "$dir/kick" ]; then rm -f "$dir/kick"; last=""; fi; if [ "$s" != "$last" ]; then printf '{"name":"demo","state":"%s","at":0}\\n' "$s"; last=$s; fi; sleep 0.05; done ;;
         screen) cat "$dir/screen" ;;
         attach) n=$(cat "$dir/count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$dir/count"
           if [ "$n" -gt 1 ]; then
@@ -46,6 +46,7 @@ final class StageDemoTests: XCTestCase {
         let session = TerminalSession(name: "demo", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "demo", host: "mac", agent: nil))
         let director = try XCTUnwrap(session.stageDirector)
+        SessionStateHub.stopAll()   // 시험마다 가짜 세션 층이 바뀐다
         director.sessionLayer = dir + "/sm-session"
         let size = NSSize(width: 980, height: 620)
         let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: 120, y: 120), size: size), styleMask: [.titled],

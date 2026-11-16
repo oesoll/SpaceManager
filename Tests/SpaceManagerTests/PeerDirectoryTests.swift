@@ -141,4 +141,11 @@ final class PeerDirectoryTests: XCTestCase {
         AttentionItem(id: key + host, key: key, host: host, source: source, fingerprint: "", title: title,
                       message: message, state: state, updatedAt: Date(timeIntervalSinceReferenceDate: 815_000_000))
     }
+
+    /// 앞이면 2초, 뒤면 6초, 그리고 느린 한 번(맥이 버거울 때)은 그 다섯 배를 쉰다.
+    func testPollBacksOffWhenInTheBackgroundOrSlow() {
+        XCTAssertEqual(PeerDirectory.delay(active: true, lastRun: 0.3), 2)
+        XCTAssertEqual(PeerDirectory.delay(active: false, lastRun: 0.3), 6)
+        XCTAssertEqual(PeerDirectory.delay(active: true, lastRun: 3), 15)
+    }
 }

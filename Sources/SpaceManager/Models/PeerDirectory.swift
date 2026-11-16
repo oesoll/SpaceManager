@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// peer가 보고하는 에이전트의 상태. 계약(10/31 cld-claude-7)상 값은 이 일곱이 전부다.
@@ -130,10 +131,11 @@ struct PeerListing: Decodable {
     }
 }
 
-/// 맥·아치·누크의 에이전트 목록. `peer --all --json`을 창이 보일 때만 2초마다 읽는다(한 번 0.2초 안팎).
-/// 모든 창이 같은 목록을 보므로 하나만 돈다.
+/// 맥·아치·누크의 에이전트 목록. `peer --all --json`을 창이 보일 때만 읽는다. 모든 창이 같은 목록을 보므로 하나만 돈다.
 ///
-/// 폴링이다 — blocked가 최대 2초 늦게 뜬다. peer에 변화 스트림이 생기면 `refresh` 호출부만 바꾼다.
+/// 한 번에 CPU 0.3초쯤 들고 아치로 ssh도 하나 연다. 그래서 sm이 앞에 있을 때만 2초, 뒤에 보이기만 할 때는 6초마다
+/// 읽고, 한 번이 오래 걸리면(재부팅 직후처럼 맥이 버거울 때) 걸린 시간의 다섯 배를 쉰다 — 고정 2초였을 때는 부하가
+/// 클수록 더 자주 겹쳐 돌았다(11/16 load 150). 폴링이다: peer에 변화 스트림이 생기면 `refresh` 호출부만 바꾼다.
 final class PeerDirectory: ObservableObject {
     static let shared = PeerDirectory()
 
@@ -143,12 +145,18 @@ final class PeerDirectory: ObservableObject {
     @Published private(set) var notices: [AttentionItem] = []
 
     static let interval: TimeInterval = 2
+    static let backgroundInterval: TimeInterval = 6
+    /// 다음 읽기까지 쉬는 시간: sm이 앞이면 2초, 아니면 6초, 그리고 지난 한 번이 걸린 시간의 다섯 배 중 긴 것.
+    static func delay(active: Bool, lastRun: TimeInterval) -> TimeInterval {
+        max(active ? interval : backgroundInterval, lastRun * 5)
+    }
 
     private let command: [String]
     private let localHost: String
     private let visibilityID = UUID()
     private var owners = Set<UUID>()
     private var timer: Timer?
+    private var visible = false
     private var inFlight = false
     /// peer가 막힘·오류라고 하는 동안(그 상태가 된 시각까지가 한 번) 노치에 그 알림이 있었던 것, 그리고 있다가
     /// 사라진 것. 노치에서 지웠으면 sm에서도 내린다 — 에이전트가 아직 그 상태여도. 노치에 한 번도 오지 않은
@@ -160,7 +168,15 @@ final class PeerDirectory: ObservableObject {
     init(command: [String] = PeerDirectory.defaultCommand, localHost: String = PeerDirectory.readLocalHost()) {
         self.command = command
         self.localHost = localHost
+        // sm을 앞으로 가져오면 뒤에 있던 동안의 6초를 기다리지 않고 바로 한 번 읽는다.
+        activation = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                            object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.visible else { return }
+            self.refresh()
+        }
     }
+
+    private var activation: NSObjectProtocol?
 
     static var defaultCommand: [String] {
         [NSHomeDirectory() + "/.smux/bin/peer", "--all", "--json"]
@@ -210,26 +226,34 @@ final class PeerDirectory: ObservableObject {
     }
 
     private func setVisible(_ visible: Bool) {
+        self.visible = visible
         timer?.invalidate()
         timer = nil
         guard visible else { return }
         refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: Self.interval, repeats: true) { [weak self] _ in
-            self?.refresh()
-        }
-        timer?.tolerance = 0.5
     }
 
+    /// 지금 한 번 읽고, 다 읽은 뒤에 다음 번을 잡는다(겹쳐 돌지 않는다).
     func refresh() {
         guard !inFlight else { return }
         inFlight = true
+        timer?.invalidate()
+        timer = nil
         let command = command
         queue.async { [weak self] in
+            let started = Date()
             let listing = Self.run(command)
+            let took = Date().timeIntervalSince(started)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.inFlight = false
                 if let listing { self.apply(listing) }
+                guard self.visible else { return }
+                let wait = Self.delay(active: NSApp?.isActive ?? false, lastRun: took)
+                self.timer = Timer.scheduledTimer(withTimeInterval: wait, repeats: false) { [weak self] _ in
+                    self?.refresh()
+                }
+                self.timer?.tolerance = wait * 0.2
             }
         }
     }

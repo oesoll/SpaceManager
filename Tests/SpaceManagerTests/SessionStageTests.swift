@@ -25,7 +25,7 @@ final class SessionStageTests: XCTestCase {
         #!/bin/sh
         dir=$(dirname "$0")
         case "$1" in
-        state) last=""; while true; do s=$(cat "$dir/ctl" 2>/dev/null); if [ "$s" != "$last" ]; then printf '{"name":"qa","state":"%s","at":0}\\n' "$s"; last=$s; fi; sleep 0.1; done ;;
+        state) (while read l; do case "$l" in +*) : > "$dir/kick" ;; esac; done) <&0 & last=""; while true; do s=$(cat "$dir/ctl" 2>/dev/null); if [ -e "$dir/kick" ]; then rm -f "$dir/kick"; last=""; fi; if [ "$s" != "$last" ]; then printf '{"name":"qa","state":"%s","at":0}\\n' "$s"; last=$s; fi; sleep 0.1; done ;;
         screen) cat "$dir/screen" ;;
         attach) n=$(cat "$dir/count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$dir/count"; echo "$@" > "$dir/args"; printf 'attached %s\\n' "$n"; exec cat ;;
         esac
@@ -50,6 +50,7 @@ final class SessionStageTests: XCTestCase {
         let session = TerminalSession(name: "qa", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "qa", host: "mac", agent: nil))
         let director = try XCTUnwrap(session.stageDirector)
+        SessionStateHub.stopAll()   // 시험마다 가짜 세션 층이 바뀐다
         director.sessionLayer = dir + "/sm-session"
         let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 480, height: 160), styleMask: [.titled],
                               backing: .buffered, defer: false)
@@ -147,6 +148,7 @@ final class SessionStageTests: XCTestCase {
         let session = TerminalSession(name: "qa", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "qa", host: "mac", agent: nil))
         let director = try XCTUnwrap(session.stageDirector)
+        SessionStateHub.stopAll()   // 시험마다 가짜 세션 층이 바뀐다
         director.sessionLayer = dir + "/sm-session"
         let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 480, height: 160), styleMask: [.titled],
                               backing: .buffered, defer: false)
@@ -162,7 +164,7 @@ final class SessionStageTests: XCTestCase {
         try """
         #!/bin/sh
         case "$1" in
-        state) printf '{"name":"qa","state":"ready","at":0}\\n'; exec sleep 30 ;;
+        state) while read l; do case "$l" in +*) printf '{"name":"qa","state":"ready","at":0}\\n' ;; esac; done ;;
         screen) printf 'LAST\\r\\n' ;;
         attach) printf 'attached\\n'; exec cat ;;
         esac
@@ -208,6 +210,7 @@ final class SessionStageTests: XCTestCase {
         let session = TerminalSession(name: "qa", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "qa", host: "mac", agent: nil))
         let director = try XCTUnwrap(session.stageDirector)
+        SessionStateHub.stopAll()   // 시험마다 가짜 세션 층이 바뀐다
         director.sessionLayer = dir + "/sm-session"
         let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 480, height: 160), styleMask: [.titled],
                               backing: .buffered, defer: false)
@@ -262,6 +265,7 @@ final class SessionStageTests: XCTestCase {
         let session = TerminalSession(name: "qa", workingDirectory: NSHomeDirectory(),
                                       attachment: .agent(name: "qa", host: "mac", agent: nil))
         let director = try XCTUnwrap(session.stageDirector)
+        SessionStateHub.stopAll()   // 시험마다 가짜 세션 층이 바뀐다
         director.sessionLayer = dir + "/sm-session"
         let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 480, height: 160), styleMask: [.titled],
                               backing: .buffered, defer: false)
